@@ -448,7 +448,7 @@
         
         reader.onload = (e) => {
           img.onload = () => { 
-            // CRITICAL FIX: Add check for valid dimensions before proceeding
+            // CRITICAL FIX: Check for valid dimensions before proceeding (prevents "zero elements" error)
             if (img.width === 0 || img.height === 0) {
                 return reject(new Error("Image loaded with zero width or height. Ensure the file is a valid, non-corrupted image format (PNG or JPEG)."));
             }
@@ -471,7 +471,7 @@
       });
     }
 
-    // --- CPU Steganography Implementation (REPLACING WebGPU) ---
+    // --- CPU Steganography Implementation ---
 
     /**
      * Executes the LSB steganography logic on the CPU.
@@ -482,7 +482,9 @@
      */
     function runStegoCPU(imageData, dataPayload, mode) {
         const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
-        const totalPayloadBits = dataPayload.length * 8;
+        
+        // FIX: Changed declaration from 'const' to 'let' so it can be decremented in EMBED mode.
+        let totalPayloadBits = dataPayload.length * 8; 
         
         if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
             throw new Error("Data too large for image capacity.");
@@ -503,8 +505,6 @@
                 const payloadBit = (payloadByte >> bitOffset) & 1;
 
                 // 2. Embed the bit (LSB) into the image channel
-                // Clear the LSB of the image pixel: (data[i] & 0xFE)
-                // Set the LSB to the payload bit: | payloadBit
                 data[i] = (data[i] & 0xFE) | payloadBit;
 
                 // 3. Advance to the next payload bit
@@ -514,7 +514,7 @@
                     dataIndex++;
                 }
 
-                totalPayloadBits--;
+                totalPayloadBits--; // Decrementing the now-allowed 'let' variable
             }
 
             // Return the modified ImageData object
