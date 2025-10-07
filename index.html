@@ -497,6 +497,11 @@
           throw new Error("Data too large for image capacity.");
       }
 
+      // Helper to calculate the next multiple of 4
+      const alignToFour = (size) => Math.ceil(size / 4) * 4;
+      const payloadBufferSize = alignToFour(dataPayload.length);
+
+
       // 1. Create Buffers
       const imageBuffer = gpuDevice.createBuffer({
         size: imageBytes.byteLength,
@@ -506,11 +511,13 @@
       new Uint8Array(imageBuffer.getMappedRange()).set(new Uint8Array(imageBytes));
       imageBuffer.unmap();
 
+      // FIX: Use padded size for the payload buffer, and copy the payload data into the padded view.
       const payloadBuffer = gpuDevice.createBuffer({
-        size: dataPayload.length,
+        size: payloadBufferSize, // Use the padded size
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
+      // Copy the non-padded data into the start of the mapped buffer
       new Uint8Array(payloadBuffer.getMappedRange()).set(dataPayload);
       payloadBuffer.unmap();
       
@@ -560,6 +567,7 @@
                 let byte_index = bit_index / 8u;
                 let bit_offset = 7u - (bit_index % 8u);
                 
+                // Note: The payload buffer is padded, but we only read the non-padded part.
                 let payload_byte = payload_data[byte_index];
                 let payload_bit = u32((payload_byte >> bit_offset) & 1u);
 
@@ -612,32 +620,32 @@
       passEncoder.end();
 
       // 5. Read back the results (depends on mode)
+      
+      // Create a staging buffer to read back the final result
+      const readbackBuffer = gpuDevice.createBuffer({
+          size: mode === StegoMode.EMBED ? imageBytes.byteLength : payloadBufferSize,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
       if (mode === StegoMode.EMBED) {
         // Read back the modified image data
-        const outputBuffer = gpuDevice.createBuffer({
-            size: imageBytes.byteLength,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-        });
-        commandEncoder.copyBufferToBuffer(imageBuffer, 0, outputBuffer, 0, imageBytes.byteLength);
+        commandEncoder.copyBufferToBuffer(imageBuffer, 0, readbackBuffer, 0, imageBytes.byteLength);
         
         gpuDevice.queue.submit([commandEncoder.finish()]);
-        await outputBuffer.mapAsync(GPUMapMode.READ);
-        const newImageDataArray = new Uint8ClampedArray(outputBuffer.getMappedRange());
-        outputBuffer.unmap();
+        await readbackBuffer.mapAsync(GPUMapMode.READ);
+        const newImageDataArray = new Uint8ClampedArray(readbackBuffer.getMappedRange());
+        readbackBuffer.unmap();
         
         return new ImageData(newImageDataArray, imageData.width, imageData.height);
       } else { 
         // Read back the extracted payload data
-        const outputBuffer = gpuDevice.createBuffer({
-            size: dataPayload.length,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-        });
-        commandEncoder.copyBufferToBuffer(payloadBuffer, 0, outputBuffer, 0, dataPayload.length);
+        commandEncoder.copyBufferToBuffer(payloadBuffer, 0, readbackBuffer, 0, payloadBufferSize);
         
         gpuDevice.queue.submit([commandEncoder.finish()]);
-        await outputBuffer.mapAsync(GPUMapMode.READ);
-        const extractedBytes = new Uint8Array(outputBuffer.getMappedRange());
-        outputBuffer.unmap();
+        await readbackBuffer.mapAsync(GPUMapMode.READ);
+        // CRITICAL: Read only the original (unpadded) length of the data
+        const extractedBytes = new Uint8Array(readbackBuffer.getMappedRange()).slice(0, dataPayload.length);
+        readbackBuffer.unmap();
 
         return extractedBytes;
       }
