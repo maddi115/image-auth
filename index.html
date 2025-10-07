@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Image-Based Auth System (WebGPU & OPFS)</title>
+  <title>Image-Based Auth System (CPU & OPFS)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
@@ -139,10 +139,10 @@
 </head>
 <body>
   <h1>Image Auth System</h1>
-  <p class="subtitle">A secure viewer for your auth image data. (WebGPU & OPFS Enabled)</p>
+  <p class="subtitle">A secure viewer for your auth image data. (CPU & OPFS Enabled)</p>
 
   <div id="main-section" class="section">
-    <div id="statusMessage" class="status" style="display:none;">Loading WebGPU...</div>
+    <div id="statusMessage" class="status" style="display:none;">Initializing...</div>
     
     <div id="loader-view">
       <h2>Load Auth Image</h2>
@@ -175,8 +175,7 @@
     const AUTH_FILENAME = 'myauth.png';
     const USERNAME_KEY = 'authUsername';
 
-    // Global state for WebGPU and File Handle
-    let gpuDevice = null;
+    // Global state for File Handle
     let authFileHandle = null;
 
     /**
@@ -190,13 +189,10 @@
     // --- Core Initialization and Rendering ---
 
     window.onload = async function() {
-      // Initialize WebGPU first
-      const isGpuReady = await initializeWebGPU();
-      
       // Attempt to initialize OPFS
       const isOpfsReady = await initializeOPFS();
 
-      if (isGpuReady && isOpfsReady) {
+      if (isOpfsReady) {
         const storedUsername = localStorage.getItem(USERNAME_KEY);
         if (authFileHandle && storedUsername) {
           renderEditorView(storedUsername);
@@ -204,8 +200,8 @@
           renderLoaderView();
         }
       } else {
-        // Only show FATAL error if an expected API is truly unavailable/blocked
-        document.getElementById('statusMessage').innerText = "FATAL ERROR: WebGPU or File System Access API not supported by your browser or is blocked (e.g., must run over HTTPS/localhost).";
+        // FATAL error if OPFS is not supported or is blocked
+        document.getElementById('statusMessage').innerText = "FATAL ERROR: File System Access API not supported by your browser or is blocked (e.g., must run over HTTPS/localhost).";
         document.getElementById('statusMessage').style.display = 'block';
       }
     };
@@ -244,17 +240,7 @@
     }
 
 
-    // --- OPFS & WebGPU Setup ---
-
-    async function initializeWebGPU() {
-      if (!navigator.gpu) return false;
-      const adapter = await navigator.gpu.requestAdapter();
-      if (!adapter) return false;
-      gpuDevice = await adapter.requestDevice();
-      document.getElementById('statusMessage').innerText = "WebGPU initialized. Checking OPFS...";
-      document.getElementById('statusMessage').style.display = 'block';
-      return true;
-    }
+    // --- OPFS Setup ---
 
     async function initializeOPFS() {
       if (!window.showDirectoryPicker) return false;
@@ -285,7 +271,7 @@
       if (authFileHandle) return alert('An auth file already exists. Please clear data first.');
 
       try {
-        document.getElementById('statusMessage').innerText = "Creating and embedding data via WebGPU...";
+        document.getElementById('statusMessage').innerText = "Creating and embedding data...";
         document.getElementById('statusMessage').style.display = 'block';
 
         const imageData = await loadImageFileToImageData(imageFile);
@@ -296,8 +282,8 @@
         
         const header = createHeader(imageHash, userId, 0, new Uint8Array(0));
         
-        // Use WebGPU to embed data
-        const newImageData = await runStegoComputeShader(imageData, header, StegoMode.EMBED);
+        // Use CPU stego logic to embed data
+        const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
         // Write new image data to OPFS
         await writeImageDataToOPFS(newImageData);
@@ -323,7 +309,7 @@
 
         const imageData = await loadImageFileToImageData(authImageFile);
         
-        // Validate the image by extracting the header (uses WebGPU)
+        // Validate the image by extracting the header (uses CPU stego)
         await readImageData(imageData, tempUsername);
 
         // Save the valid image to OPFS
@@ -409,8 +395,8 @@
     }
 
     async function readImageData(imageData, usernameToVerify) {
-      // Extract the header (HEADER_SIZE bytes) using WebGPU
-      const headerBytes = await runStegoComputeShader(imageData, new Uint8Array(HEADER_SIZE), StegoMode.EXTRACT);
+      // Extract the header (HEADER_SIZE bytes) using CPU stego
+      const headerBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE), StegoMode.EXTRACT);
 
       const headerView = new DataView(headerBytes.buffer);
       const imageHash = headerView.getBigUint64(0, true);
@@ -426,8 +412,8 @@
       
       let websites = [];
       if (websitesDataLength > 0) {
-        // Extract the full payload (Header + Websites) using WebGPU
-        const fullPayloadBytes = await runStegoComputeShader(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
+        // Extract the full payload (Header + Websites) using CPU stego
+        const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
         const websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
         websites = new TextDecoder().decode(websitesBytes).split('\0').filter(Boolean);
       }
@@ -462,9 +448,8 @@
         
         reader.onload = (e) => {
           img.onload = () => { 
-            // 🐛 CRITICAL FIX: Add check for valid dimensions before proceeding
+            // CRITICAL FIX: Add check for valid dimensions before proceeding
             if (img.width === 0 || img.height === 0) {
-                // This prevents the "Failed to construct 'ImageData': The input data has zero elements." error.
                 return reject(new Error("Image loaded with zero width or height. Ensure the file is a valid, non-corrupted image format (PNG or JPEG)."));
             }
 
@@ -486,178 +471,83 @@
       });
     }
 
-    // --- WebGPU Steganography Compute Shader Implementation ---
+    // --- CPU Steganography Implementation (REPLACING WebGPU) ---
 
     /**
-     * Executes the LSB steganography logic on the GPU.
+     * Executes the LSB steganography logic on the CPU.
      * @param {ImageData} imageData - The source image data.
      * @param {Uint8Array} dataPayload - Data to embed (mode=1) or a placeholder array to fill (mode=0).
      * @param {number} mode - 0 for EXTRACT, 1 for EMBED.
-     * @returns {Promise<Uint8Array|ImageData>} The resulting payload (extract) or new image data (embed).
+     * @returns {Uint8Array|ImageData} The resulting payload (extract) or new image data (embed).
      */
-    async function runStegoComputeShader(imageData, dataPayload, mode) {
-      if (!gpuDevice) throw new Error("WebGPU device not initialized.");
-
-      const imageBytes = imageData.data.buffer;
-      const totalPixels = imageData.width * imageData.height;
-      const totalPayloadBits = dataPayload.length * 8;
-      
-      if (mode === StegoMode.EMBED && totalPayloadBits > totalPixels * 3) {
-          throw new Error("Data too large for image capacity.");
-      }
-
-      // Helper to calculate the next multiple of 4 (WebGPU buffer alignment requirement)
-      const alignToFour = (size) => Math.ceil(size / 4) * 4;
-      const payloadBufferSize = alignToFour(dataPayload.length);
-
-
-      // 1. Create Buffers
-      const imageBuffer = gpuDevice.createBuffer({
-        size: imageBytes.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint8Array(imageBuffer.getMappedRange()).set(new Uint8Array(imageBytes));
-      imageBuffer.unmap();
-
-      // FIX: Use padded size for the payload buffer, and copy the payload data into the padded view.
-      const payloadBuffer = gpuDevice.createBuffer({
-        size: payloadBufferSize, // Use the padded size
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      // Copy the non-padded data into the start of the mapped buffer
-      new Uint8Array(payloadBuffer.getMappedRange()).set(dataPayload);
-      payloadBuffer.unmap();
-      
-      const metadataBuffer = gpuDevice.createBuffer({
-        size: 16, // 4 x 4-byte integers: width, height, mode, totalPayloadBits
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-      gpuDevice.queue.writeBuffer(metadataBuffer, 0, new Int32Array([imageData.width, imageData.height, mode, totalPayloadBits]));
-
-      // 2. Compute Shader (WGSL)
-      // The shader iterates over the total number of bits required for the payload.
-      // Each thread processes one bit of the payload.
-      const computeShaderCode = `
-        struct Params {
-            width: i32,
-            height: i32,
-            mode: i32,
-            total_bits: i32,
-        };
-
-        @group(0) @binding(0) var<uniform> params: Params;
-        @group(0) @binding(1) var<storage, read_write> image_data: array<u32>; // RGBA data as u32 array
-        @group(0) @binding(2) var<storage, read_write> payload_data: array<u8>; // Payload bytes
-
-        @compute
-        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-            let bit_index = global_id.x;
-            if (bit_index >= u32(params.total_bits)) {
-                return;
-            }
-
-            // Calculate which byte in the image_data array (R, G, or B) holds this bit.
-            // 3/4ths of the image_data bytes are used (R, G, B, skip A).
-            // image_byte_index goes 0, 1, 2, 4, 5, 6, 8, 9, 10, ...
-            let pixel_component_index = bit_index / 3u; // Which pixel component (0=R, 1=G, 2=B, 3=R, ...)
-            let image_byte_index = pixel_component_index + pixel_component_index / 3u;
-            
-            // Get the current image byte value
-            // image_data is u32 array, but we need byte access
-            let image_u32_index = image_byte_index / 4u;
-            let image_byte_offset = image_byte_index % 4u;
-            
-            var image_u32 = image_data[image_u32_index];
-            var image_byte = u32(image_u32 >> (image_byte_offset * 8u)) & 0xFFu;
-
-            if (params.mode == 1) { // EMBED
-                let byte_index = bit_index / 8u;
-                let bit_offset = 7u - (bit_index % 8u);
-                
-                // Note: The payload buffer is padded, but we only read the non-padded part.
-                let payload_byte = payload_data[byte_index];
-                let payload_bit = u32((payload_byte >> bit_offset) & 1u);
-
-                // Modify the LSB of the image byte
-                image_byte = (image_byte & 0xFEu) | payload_bit;
-            } else { // EXTRACT
-                // Read the LSB of the image byte
-                let extracted_bit = image_byte & 1u;
-
-                // Write the extracted bit into the payload_data buffer
-                let byte_index = bit_index / 8u;
-                let bit_offset = 7u - (bit_index % 8u);
-                
-                var current_payload_byte = payload_data[byte_index];
-                current_payload_byte = current_payload_byte | u8(extracted_bit << bit_offset);
-                payload_data[byte_index] = current_payload_byte;
-            }
-
-            // Write the modified image byte back into the u32 array
-            let mask = 0xFFu << (image_byte_offset * 8u);
-            let value_to_write = image_byte << (image_byte_offset * 8u);
-            image_u32 = (image_u32 & (~mask)) | value_to_write;
-            
-            image_data[image_u32_index] = image_u32;
+    function runStegoCPU(imageData, dataPayload, mode) {
+        const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
+        const totalPayloadBits = dataPayload.length * 8;
+        
+        if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
+            throw new Error("Data too large for image capacity.");
         }
-      `;
-      
-      // 3. Setup Pipeline and Bind Group
-      const module = gpuDevice.createShaderModule({ code: computeShaderCode });
-      const pipeline = gpuDevice.createComputePipeline({
-        layout: 'auto',
-        compute: { module, entryPoint: 'main' },
-      });
 
-      const bindGroup = gpuDevice.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: metadataBuffer } },
-          { binding: 1, resource: { buffer: imageBuffer } },
-          { binding: 2, resource: { buffer: payloadBuffer } },
-        ],
-      });
+        if (mode === StegoMode.EMBED) {
+            let dataIndex = 0; // Index into dataPayload byte array
+            let bitOffset = 7; // Bit position within the dataPayload byte (from 7 down to 0)
 
-      // 4. Run Command
-      const commandEncoder = gpuDevice.createCommandEncoder();
-      const passEncoder = commandEncoder.beginComputePass();
-      passEncoder.setPipeline(pipeline);
-      passEncoder.setBindGroup(0, bindGroup);
-      passEncoder.dispatchWorkgroups(Math.ceil(totalPayloadBits / 64)); // Dispatch one thread per bit, 64 per workgroup
-      passEncoder.end();
+            for (let i = 0; i < data.length; i++) {
+                // Skip Alpha channel (index i % 4 === 3)
+                if ((i % 4) === 3) continue; 
+                
+                if (totalPayloadBits <= 0) break;
 
-      // 5. Read back the results (depends on mode)
-      
-      // Create a staging buffer to read back the final result
-      const readbackBuffer = gpuDevice.createBuffer({
-          size: mode === StegoMode.EMBED ? imageBytes.byteLength : payloadBufferSize,
-          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
+                // 1. Get the payload bit (from most significant bit down)
+                const payloadByte = dataPayload[dataIndex];
+                const payloadBit = (payloadByte >> bitOffset) & 1;
 
-      if (mode === StegoMode.EMBED) {
-        // Read back the modified image data
-        commandEncoder.copyBufferToBuffer(imageBuffer, 0, readbackBuffer, 0, imageBytes.byteLength);
-        
-        gpuDevice.queue.submit([commandEncoder.finish()]);
-        await readbackBuffer.mapAsync(GPUMapMode.READ);
-        const newImageDataArray = new Uint8ClampedArray(readbackBuffer.getMappedRange());
-        readbackBuffer.unmap();
-        
-        return new ImageData(newImageDataArray, imageData.width, imageData.height);
-      } else { 
-        // Read back the extracted payload data
-        commandEncoder.copyBufferToBuffer(payloadBuffer, 0, readbackBuffer, 0, payloadBufferSize);
-        
-        gpuDevice.queue.submit([commandEncoder.finish()]);
-        await readbackBuffer.mapAsync(GPUMapMode.READ);
-        // CRITICAL: Read only the original (unpadded) length of the data
-        const extractedBytes = new Uint8Array(readbackBuffer.getMappedRange()).slice(0, dataPayload.length);
-        readbackBuffer.unmap();
+                // 2. Embed the bit (LSB) into the image channel
+                // Clear the LSB of the image pixel: (data[i] & 0xFE)
+                // Set the LSB to the payload bit: | payloadBit
+                data[i] = (data[i] & 0xFE) | payloadBit;
 
-        return extractedBytes;
-      }
+                // 3. Advance to the next payload bit
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
+
+                totalPayloadBits--;
+            }
+
+            // Return the modified ImageData object
+            return imageData;
+
+        } else { // StegoMode.EXTRACT
+            const extractedBytes = new Uint8Array(dataPayload.length);
+            let dataIndex = 0; // Index into extractedBytes byte array
+            let bitOffset = 7; // Bit position within the extractedBytes byte (from 7 down to 0)
+
+            for (let i = 0; i < data.length; i++) {
+                // Skip Alpha channel (index i % 4 === 3)
+                if ((i % 4) === 3) continue;
+
+                if (dataIndex >= extractedBytes.length) break;
+
+                // 1. Extract the LSB of the image channel
+                const extractedBit = data[i] & 1;
+
+                // 2. Write the bit into the extractedBytes byte array
+                extractedBytes[dataIndex] |= (extractedBit << bitOffset);
+
+                // 3. Advance to the next bit position
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
+            }
+            
+            // Return the extracted payload
+            return extractedBytes;
+        }
     }
   </script>
 </body>
