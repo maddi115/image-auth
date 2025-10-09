@@ -172,18 +172,30 @@
 
   <script>
     // Constants
-    const HEADER_SIZE = 50; 
+    const HEADER_SIZE = 82; // Increased to accommodate random salt (50 + 32 bytes salt)
     const DATA_HASH_SIZE = 32;
     const USERNAME_KEY = 'authUsername';
     const MAX_USERNAME_LENGTH = 32;
     const ENCRYPTION_ALGORITHM = 'AES-GCM';
     const IV_LENGTH = 12; // 12 bytes for AES-GCM
+    const SALT_LENGTH = 32; // 32 bytes for encryption key derivation salt
+    const PBKDF2_ITERATIONS = 600000; // OWASP 2023 recommendation
+    
+    // Rate Limiting Constants
+    const MAX_FAILED_ATTEMPTS = 5;
+    const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+    const ATTEMPT_DECAY_MS = 5 * 60 * 1000; // 5 minutes - time for attempts to start decaying
 
     // Global state for the active image data and username
     let activeImageData = null; 
     let activeUsername = null;
     let activeImageBlob = null;
     let activeOriginalImageHash = null; // Store the original image hash for filename
+    
+    // Rate Limiting State
+    let failedAttempts = 0;
+    let lockoutUntil = null;
+    let lastAttemptTime = null;
 
     const StegoMode = { EXTRACT: 0, EMBED: 1 };
 
@@ -268,11 +280,11 @@
         const markerBytes = new TextEncoder().encode('INIT');
         
         // Encrypt the payload before embedding
-        const encryptedPayload = await encryptData(markerBytes, userId);
+        const { encryptedData: encryptedPayload, salt } = await encryptData(markerBytes, userId);
         
         // Calculate integrity hash of the ENCRYPTED payload
         const dataIntegrityHash = await cryptoHash(encryptedPayload);
-        const header = createHeader(imageHash, userId, encryptedPayload.length, dataIntegrityHash, encryptedPayload);
+        const header = createHeader(imageHash, userId, encryptedPayload.length, dataIntegrityHash, encryptedPayload, salt);
         
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
@@ -296,6 +308,9 @@
       if (!authImageFile) return alert('Please select your myauth.png file.');
 
       try {
+        // Check rate limit before prompting for username
+        checkRateLimit();
+        
         const rawUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
         if (!rawUsername) return;
         const tempUsername = sanitizeUsername(rawUsername);
@@ -309,6 +324,9 @@
         // This will throw an error if authentication or integrity fails
         const { imageHash } = await readImageData(imageData, tempUsername);
 
+        // Successful authentication - reset failed attempts
+        recordSuccessfulAttempt();
+
         activeImageData = imageData;
         activeUsername = tempUsername;
         activeOriginalImageHash = imageHash;
@@ -319,6 +337,19 @@
 
       } catch(e) {
         document.getElementById('statusMessage').style.display = 'none';
+        
+        // Record failed attempt if it's an authentication/integrity error
+        if (e.message.includes('Authentication failed') || 
+            e.message.includes('Integrity check failed') || 
+            e.message.includes('Decryption failed')) {
+          try {
+            recordFailedAttempt();
+          } catch (rateLimitError) {
+            alert(rateLimitError.message);
+            return;
+          }
+        }
+        
         alert(`Could not load auth image. ${e.message}`);
         clearData();
       }
@@ -334,7 +365,8 @@
       const imageHash = headerView.getBigUint64(0, true);
       const userId = headerView.getBigUint64(8, true);
       const integrityHashBytes = headerBytes.slice(16, 16 + DATA_HASH_SIZE);
-      const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE, true);
+      const encryptionSalt = headerBytes.slice(16 + DATA_HASH_SIZE, 16 + DATA_HASH_SIZE + SALT_LENGTH); // Extract salt
+      const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE + SALT_LENGTH, true); // Now at position 80
       
       // 1. Verify User ID (Authentication)
       if (usernameToVerify) {
@@ -365,7 +397,7 @@
         
         // 3. Decrypt the payload after integrity check passes
         try {
-          websitesBytes = await decryptData(encryptedPayload, userId);
+          websitesBytes = await decryptData(encryptedPayload, userId, encryptionSalt);
         } catch (decryptError) {
           throw new Error("Decryption failed: Invalid encryption key or corrupted data.");
         }
@@ -380,19 +412,76 @@
       return { userId, imageHash, websites };
     }
 
-    function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes) {
+    function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes, salt) {
       const dataToEmbed = new Uint8Array(HEADER_SIZE + websitesLength);
       const dataView = new DataView(dataToEmbed.buffer);
+      
+      // Header structure (82 bytes total):
+      // 0-7: Image Hash (8 bytes)
+      // 8-15: User ID (8 bytes)
+      // 16-47: Data Integrity Hash (32 bytes)
+      // 48-79: Encryption Salt (32 bytes)
+      // 80-81: Websites Length (2 bytes)
       
       dataView.setBigUint64(0, imageHash, true);
       dataView.setBigUint64(8, userId, true);
       dataToEmbed.set(dataIntegrityHashBytes, 16);
-      dataView.setUint16(16 + DATA_HASH_SIZE, websitesLength, true);
+      dataToEmbed.set(salt, 16 + DATA_HASH_SIZE);
+      dataView.setUint16(16 + DATA_HASH_SIZE + SALT_LENGTH, websitesLength, true);
       dataToEmbed.set(websitesBytes, HEADER_SIZE);
       
       return dataToEmbed;
     }
 
+    // --- Rate Limiting Functions ---
+    
+    function checkRateLimit() {
+      const now = Date.now();
+      
+      // Check if currently locked out
+      if (lockoutUntil && now < lockoutUntil) {
+        const remainingSeconds = Math.ceil((lockoutUntil - now) / 1000);
+        const minutes = Math.floor(remainingSeconds / 60);
+        const seconds = remainingSeconds % 60;
+        throw new Error(`Too many failed attempts. Please wait ${minutes}m ${seconds}s before trying again.`);
+      }
+      
+      // Reset lockout if time has passed
+      if (lockoutUntil && now >= lockoutUntil) {
+        failedAttempts = 0;
+        lockoutUntil = null;
+      }
+      
+      // Decay old attempts (reduce count if last attempt was more than ATTEMPT_DECAY_MS ago)
+      if (lastAttemptTime && (now - lastAttemptTime) > ATTEMPT_DECAY_MS) {
+        failedAttempts = Math.max(0, failedAttempts - 1);
+      }
+      
+      return true;
+    }
+    
+    function recordFailedAttempt() {
+      const now = Date.now();
+      failedAttempts++;
+      lastAttemptTime = now;
+      
+      if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+        lockoutUntil = now + LOCKOUT_DURATION_MS;
+        throw new Error(`Too many failed attempts. Account locked for 15 minutes.`);
+      }
+      
+      const attemptsRemaining = MAX_FAILED_ATTEMPTS - failedAttempts;
+      if (attemptsRemaining <= 2) {
+        alert(`Warning: ${attemptsRemaining} attempt(s) remaining before 15-minute lockout.`);
+      }
+    }
+    
+    function recordSuccessfulAttempt() {
+      failedAttempts = 0;
+      lockoutUntil = null;
+      lastAttemptTime = null;
+    }
+    
     // --- Generic Utilities ---
     
     function arraysEqual(a, b) {
@@ -410,8 +499,8 @@
 
     // --- Encryption/Decryption Functions ---
     
-    // Derive an AES-GCM encryption key from the userId
-    async function deriveEncryptionKey(userId) {
+    // Derive an AES-GCM encryption key from the userId and random salt
+    async function deriveEncryptionKey(userId, salt) {
       // Convert userId to bytes
       const userIdBytes = new Uint8Array(8);
       const view = new DataView(userIdBytes.buffer);
@@ -426,12 +515,12 @@
         ['deriveBits', 'deriveKey']
       );
       
-      // Derive AES-GCM key
+      // Derive AES-GCM key with the provided salt
       const key = await window.crypto.subtle.deriveKey(
         {
           name: 'PBKDF2',
-          salt: new Uint8Array([0x73, 0x61, 0x6c, 0x74, 0x79, 0x21, 0x32, 0x33]), // Static salt "salty!23"
-          iterations: 100000,
+          salt: salt,
+          iterations: PBKDF2_ITERATIONS,
           hash: 'SHA-256'
         },
         baseKey,
@@ -443,9 +532,11 @@
       return key;
     }
     
-    // Encrypt data using AES-GCM
+    // Encrypt data using AES-GCM with a random salt
     async function encryptData(data, userId) {
-      const key = await deriveEncryptionKey(userId);
+      // Generate random salt for key derivation
+      const salt = window.crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+      const key = await deriveEncryptionKey(userId, salt);
       
       // Generate random IV
       const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH));
@@ -457,19 +548,20 @@
         data
       );
       
-      // Combine IV + encrypted data
-      const encryptedData = new Uint8Array(IV_LENGTH + encryptedBuffer.byteLength);
-      encryptedData.set(iv, 0);
-      encryptedData.set(new Uint8Array(encryptedBuffer), IV_LENGTH);
+      // Combine salt + IV + encrypted data
+      const encryptedData = new Uint8Array(SALT_LENGTH + IV_LENGTH + encryptedBuffer.byteLength);
+      encryptedData.set(salt, 0);
+      encryptedData.set(iv, SALT_LENGTH);
+      encryptedData.set(new Uint8Array(encryptedBuffer), SALT_LENGTH + IV_LENGTH);
       
-      return encryptedData;
+      return { encryptedData, salt };
     }
     
     // Decrypt data using AES-GCM
-    async function decryptData(encryptedData, userId) {
-      const key = await deriveEncryptionKey(userId);
+    async function decryptData(encryptedData, userId, salt) {
+      const key = await deriveEncryptionKey(userId, salt);
       
-      // Extract IV and encrypted payload
+      // Extract IV and encrypted payload (skip the salt, it's stored separately in header)
       const iv = encryptedData.slice(0, IV_LENGTH);
       const ciphertext = encryptedData.slice(IV_LENGTH);
       
