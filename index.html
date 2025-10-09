@@ -277,16 +277,17 @@
         const imageData = await loadImageFileToImageData(imageFile);
         const originalBytes = new Uint8Array(await imageFile.arrayBuffer());
         
-        // --- UPDATED HASHING LOGIC ---
-        const imageHash = await secureHash(originalBytes);
-        const usernameHash = await secureHash(username);
+        // --- UPDATE 1: Use cryptoHash (SHA-256) instead of simpleHash ---
+        const imageHashBytes = await cryptoHash(originalBytes);
+        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(username));
+
+        // Take the first 8 bytes (64-bit BigInt) of the SHA-256 hash for Image Hash and User Hash
+        const imageHash = new DataView(imageHashBytes.buffer).getBigUint64(0, true);
+        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
         
-        // User ID is the XOR combination of two strong hashes (still 64-bit BigInt)
-        // We take the first 8 bytes (64-bit) of the 256-bit SHA-256 result for XOR.
         const userId = usernameHash ^ imageHash;
         
         const header = createHeader(imageHash, userId, 0, new Uint8Array(0));
-        // --- END UPDATED HASHING LOGIC ---
         
         // Use CPU stego logic to embed data
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
@@ -410,10 +411,10 @@
       const websitesDataLength = headerView.getUint16(16, true);
       
       if (usernameToVerify) {
-        // --- UPDATED HASHING LOGIC ---
-        const usernameHash = await secureHash(usernameToVerify);
+        // --- UPDATE 1: Use cryptoHash (SHA-256) instead of simpleHash ---
+        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(usernameToVerify));
+        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
         const computedUserId = usernameHash ^ imageHash;
-        // --- END UPDATED HASHING LOGIC ---
 
         if (userId !== computedUserId) {
           throw new Error("Username does not match the data in this image file.");
@@ -443,22 +444,19 @@
 
 
     // --- Generic Utilities (Re-used) ---
-    
-    // **REPLACED:** The weak simpleHash function has been replaced with the secureHash function.
-    async function secureHash(data) {
-        const encoder = new TextEncoder();
-        const dataArray = typeof data === 'string' ? encoder.encode(data) : data;
-        
-        // Use Web Crypto API for SHA-256 hashing
-        const hashBuffer = await window.crypto.subtle.digest('SHA-256', dataArray);
-        
-        // We only need 8 bytes (64-bit) for the BigInt ID/Hash
-        const hashPart = hashBuffer.slice(0, 8);
-        
-        // Convert the first 8 bytes of the SHA-256 hash to a BigInt
-        const dataView = new DataView(hashPart);
-        return dataView.getBigUint64(0, true);
+
+    /**
+     * Generates a cryptographically secure SHA-256 hash.
+     * @param {Uint8Array} data - The data to hash (e.g., image bytes, username bytes).
+     * @returns {Promise<Uint8Array>} A Promise that resolves with the 32-byte hash.
+     */
+    async function cryptoHash(data) {
+      // If the browser doesn't support the Web Crypto API, this will fail gracefully.
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+      return new Uint8Array(hashBuffer);
     }
+    
+    // The old simpleHash function is removed as it's no longer used.
     
     function loadImageFileToImageData(file) {
       return new Promise((resolve, reject) => {
@@ -502,7 +500,6 @@
     function runStegoCPU(imageData, dataPayload, mode) {
         const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
         
-        // FIX: Changed declaration from 'const' to 'let' so it can be decremented in EMBED mode.
         let totalPayloadBits = dataPayload.length * 8; 
         
         if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
