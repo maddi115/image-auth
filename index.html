@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Image-Based Auth System (CPU & OPFS)</title>
+  <title>Image-Based Auth System (CPU ONLY)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
+    /* CSS styles remain the same for visual consistency */
     :root {
       --background: #ffffff;
       --foreground: #020817;
@@ -139,7 +140,7 @@
 </head>
 <body>
   <h1>Image Auth System</h1>
-  <p class="subtitle">A secure viewer for your auth image data. (CPU & OPFS Enabled)</p>
+  <p class="subtitle">A secure viewer for your auth image data. (CPU ONLY)</p>
 
   <div id="main-section" class="section">
     <div id="statusMessage" class="status" style="display:none;">Initializing...</div>
@@ -163,24 +164,25 @@
       
       <hr style="margin: 20px 0;">
 
-      <button onclick="downloadImage()">Download myauth.png</button>
-      <button onclick="clearData()" class="secondary">Start Over (Clear OPFS)</button>
+            <button id="downloadBtn" onclick="downloadImage()">Download myauth.png</button>
+      <button onclick="clearData()" class="secondary">Close View (Clear Memory)</button>
     </div>
   </div>
 
   <canvas id="workingCanvas" style="display:none;"></canvas>
 
   <script>
-    // Header size is now 50 bytes: 8 (Image Hash) + 8 (User ID) + 32 (Data Hash/Integrity) + 2 (Websites Length)
+    // Constants
     const HEADER_SIZE = 50; 
     const DATA_HASH_SIZE = 32;
-    const AUTH_FILENAME = 'myauth.png';
     const USERNAME_KEY = 'authUsername';
     const MAX_USERNAME_LENGTH = 32;
-    const MAX_WEBSITES_DATA_LENGTH = 1024 * 5; // 5KB limit for total website data
+    // Removed AUTH_FILENAME as it's not needed for persistent storage
 
-    // Global state for File Handle
-    let authFileHandle = null;
+    // Global state for the active image data and username
+    let activeImageData = null; 
+    let activeUsername = null;
+    let activeImageBlob = null; // Store the final blob for the download button
 
     const StegoMode = { EXTRACT: 0, EMBED: 1 };
 
@@ -195,29 +197,28 @@
         return;
       }
       
-      // Attempt to initialize OPFS
-      const isOpfsReady = await initializeOPFS();
-
-      if (isOpfsReady) {
-        const storedUsername = localStorage.getItem(USERNAME_KEY);
-        if (authFileHandle && storedUsername) {
-          renderEditorView(storedUsername);
-        } else {
-          renderLoaderView();
-        }
-      } else {
-        document.getElementById('statusMessage').innerText = "FATAL ERROR: File System Access API not supported by your browser or is blocked (e.g., must run over HTTPS/localhost).";
-        document.getElementById('statusMessage').style.display = 'block';
-      }
+      // Since OPFS is removed, we check localStorage for the last used username 
+      // to pre-fill the form, but we render the loader view.
+      renderLoaderView();
     };
 
     function renderLoaderView() {
       document.getElementById('statusMessage').style.display = 'none';
       document.getElementById('loader-view').style.display = 'block';
       document.getElementById('editor-view').style.display = 'none';
+      
+      // Optional: Load last used username for convenience
+      const lastUsername = localStorage.getItem(USERNAME_KEY);
+      if (lastUsername) {
+        document.getElementById('createUsername').value = lastUsername;
+      }
     }
 
-    async function renderEditorView(username) {
+    async function renderEditorView() {
+      if (!activeImageData || !activeUsername) {
+        return renderLoaderView(); // Fallback if data is missing
+      }
+      
       document.getElementById('loader-view').style.display = 'none';
       document.getElementById('editor-view').style.display = 'block';
 
@@ -225,7 +226,8 @@
         document.getElementById('statusMessage').innerText = "Reading data from auth image...";
         document.getElementById('statusMessage').style.display = 'block';
         
-        const { userId, websites } = await readImageDataFromOPFS(username);
+        // Read the data from the active, in-memory ImageData
+        const { userId, websites } = await readImageData(activeImageData, activeUsername);
         
         document.getElementById('statusMessage').style.display = 'none';
 
@@ -234,32 +236,12 @@
           : '<p style="color:var(--muted-foreground); margin-top: 8px;">No websites have been added yet.</p>';
         
         document.getElementById('userDataOutput').innerHTML =
-          `<strong>Username:</strong> ${username}<br>` +
+          `<strong>Username:</strong> ${activeUsername}<br>` +
           `<strong>User ID:</strong> ${userId.toString(16)}<br><br>` +
           `<strong style="font-weight:500;">Websites With My Profile</strong>` + websiteListHtml;
       } catch (e) {
         alert("Error reading loaded image data. Was the username correct? Is the data tampered with?\n" + e.message);
-        clearData(true); // Call clearData to reset state on major error
-      }
-    }
-
-
-    // --- OPFS Setup ---
-
-    async function initializeOPFS() {
-      if (!window.showDirectoryPicker) return false;
-      try {
-        const root = await navigator.storage.getDirectory();
-        try {
-          authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: false });
-        } catch (e) {
-          authFileHandle = null; // File doesn't exist
-        }
-        document.getElementById('statusMessage').style.display = 'none';
-        return true;
-      } catch (e) {
-        console.error("OPFS initialization failed:", e);
-        return false;
+        clearData(); // Clear memory state on major error
       }
     }
 
@@ -267,46 +249,48 @@
 
     async function createAndLoad() {
       try {
-        // --- UPDATE 3: Input Validation ---
+        // Input Validation
         const rawUsername = document.getElementById('createUsername').value;
         const username = sanitizeUsername(rawUsername);
         const imageFile = document.getElementById('createImage').files[0];
         
         if (!username) return alert('Please enter a valid username (max ' + MAX_USERNAME_LENGTH + ' characters).');
         if (!imageFile) return alert('Please select a base image.');
-        if (authFileHandle) return alert('An auth file already exists. Please clear data first.');
-
+        
         document.getElementById('statusMessage').innerText = "Creating and embedding data...";
         document.getElementById('statusMessage').style.display = 'block';
 
         const imageData = await loadImageFileToImageData(imageFile);
         const originalBytes = new Uint8Array(await imageFile.arrayBuffer());
         
-        // Calculate necessary hashes and IDs using Web Crypto API (Update 1)
+        // Hashing and ID calculation
         const imageHashBytes = await cryptoHash(originalBytes);
         const usernameHashBytes = await cryptoHash(new TextEncoder().encode(username));
 
         const imageHash = new DataView(imageHashBytes.buffer).getBigUint64(0, true);
         const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
-        
         const userId = usernameHash ^ imageHash;
         
-        // Initial data: empty websites list
+        // Embed header
         const emptyWebsitesBytes = new Uint8Array(0);
-        // --- Update 2: Calculate Data Integrity Hash ---
         const dataIntegrityHash = await cryptoHash(emptyWebsitesBytes);
-        
         const header = createHeader(imageHash, userId, emptyWebsitesBytes.length, dataIntegrityHash, emptyWebsitesBytes);
         
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
-        await writeImageDataToOPFS(newImageData);
+        // Set global state for in-memory use
+        activeImageData = newImageData; 
+        activeUsername = username;
+        
+        // Generate Blob for immediate download
+        await updateActiveImageBlob(activeImageData); 
         
         localStorage.setItem(USERNAME_KEY, username);
-        renderEditorView(username);
+        renderEditorView();
       } catch (e) {
         document.getElementById('statusMessage').style.display = 'none';
         alert("An error occurred during creation: " + e.message);
+        clearData();
       }
     }
 
@@ -317,42 +301,34 @@
       try {
         const rawUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
         if (!rawUsername) return;
-        // --- UPDATE 3: Input Validation ---
+        // Input Validation
         const tempUsername = sanitizeUsername(rawUsername);
         if (!tempUsername) throw new Error('Invalid username entered for verification.');
 
-        document.getElementById('statusMessage').innerText = "Verifying and saving file to OPFS...";
+        document.getElementById('statusMessage').innerText = "Verifying auth file...";
         document.getElementById('statusMessage').style.display = 'block';
 
         const imageData = await loadImageFileToImageData(authImageFile);
         
-        // This readImageData includes the new integrity checks (Update 2) and Auth check (Update 1)
+        // Run all authentication and integrity checks
         await readImageData(imageData, tempUsername);
 
-        // File passed all checks: Save the valid image to OPFS
-        const root = await navigator.storage.getDirectory();
-        authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: true });
-        const writable = await authFileHandle.createWritable();
-        await writable.write(authImageFile);
-        await writable.close();
-        
+        // If successful, set global state
+        activeImageData = imageData;
+        activeUsername = tempUsername;
+        await updateActiveImageBlob(activeImageData);
+
         localStorage.setItem(USERNAME_KEY, tempUsername);
-        renderEditorView(tempUsername);
+        renderEditorView();
 
       } catch(e) {
         document.getElementById('statusMessage').style.display = 'none';
         alert(`Could not load auth image. ${e.message}`);
+        clearData();
       }
     }
 
     // --- Data Read/Write Helpers ---
-
-    async function readImageDataFromOPFS(username) {
-        if (!authFileHandle) throw new Error("No file handle available.");
-        const file = await authFileHandle.getFile();
-        const imageData = await loadImageFileToImageData(file);
-        return readImageData(imageData, username);
-    }
 
     async function readImageData(imageData, usernameToVerify) {
       // Extract the header (HEADER_SIZE bytes) using CPU stego
@@ -364,7 +340,7 @@
       const integrityHashBytes = headerBytes.slice(16, 16 + DATA_HASH_SIZE); // 32 bytes
       const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE, true); // Starts at index 48
       
-      // 1. Verify User ID (Authentication) (Update 1)
+      // 1. Verify User ID (Authentication)
       if (usernameToVerify) {
         const usernameHashBytes = await cryptoHash(new TextEncoder().encode(usernameToVerify));
         const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
@@ -384,7 +360,7 @@
         websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
         websites = new TextDecoder().decode(websitesBytes).split('\0').filter(Boolean);
         
-        // --- Update 2: Verify Data Integrity Hash ---
+        // 2. Verify Data Integrity Hash
         const computedIntegrityHash = await cryptoHash(websitesBytes);
         
         if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
@@ -395,7 +371,7 @@
       return { userId, imageHash, websites };
     }
 
-    // --- UPDATE 2: New Header Creation Function ---
+    // Creates the full header and payload byte array
     function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes) {
       const dataToEmbed = new Uint8Array(HEADER_SIZE + websitesLength);
       const dataView = new DataView(dataToEmbed.buffer);
@@ -415,9 +391,9 @@
     }
 
 
-    // --- Generic Utilities (Updated) ---
+    // --- Generic Utilities ---
     
-    // Helper function to compare two Uint8Arrays (used for integrity hash check)
+    // Helper function to compare two Uint8Arrays
     function arraysEqual(a, b) {
       if (a.length !== b.length) return false;
       for (let i = 0; i < a.length; i++) {
@@ -426,43 +402,37 @@
       return true;
     }
 
-    // UPDATE 1: Use Web Crypto API for all hashing
+    // Use Web Crypto API for all hashing
     async function cryptoHash(data) {
       const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
       return new Uint8Array(hashBuffer);
     }
 
-    // --- UPDATE 3: Input Validation and Sanitization Function ---
-
+    // Input Validation and Sanitization
     function sanitizeUsername(rawUsername) {
       const username = rawUsername.trim();
       // Strip out control characters and the data separator character (null byte)
       let cleanUsername = username.replace(/[\u0000-\u001F]/g, '');
       
       if (cleanUsername.length === 0 || cleanUsername.length > MAX_USERNAME_LENGTH) {
-        return null; // Invalid or empty after cleaning
+        return null;
       }
       return cleanUsername;
     }
     
-    // --- OPFS and Image Handling ---
-
-    async function writeImageDataToOPFS(imageData) {
+    // Creates the output Blob and stores it globally for download
+    async function updateActiveImageBlob(imageData) {
         const canvas = document.getElementById('workingCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = imageData.width;
         canvas.height = imageData.height;
         ctx.putImageData(imageData, 0, 0);
 
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-        
-        const root = await navigator.storage.getDirectory();
-        authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: true });
-        
-        const writable = await authFileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
+        activeImageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
     }
+
+
+    // --- Image and Stego Handling (Unchanged) ---
 
     function loadImageFileToImageData(file) {
         return new Promise((resolve, reject) => {
@@ -491,15 +461,10 @@
         });
     }
 
-    /**
-     * Executes the LSB steganography logic on the CPU.
-     */
     function runStegoCPU(imageData, dataPayload, mode) {
         const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
-        
         let totalPayloadBits = dataPayload.length * 8;	
         
-        // We embed 3 bits per pixel (R, G, B channels)
         if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
             throw new Error("Data too large for image capacity.");
         }
@@ -510,7 +475,6 @@
 
             for (let i = 0; i < data.length; i++) {
                 if ((i % 4) === 3) continue;	
-                
                 if (totalPayloadBits <= 0) break;
 
                 const payloadByte = dataPayload[dataIndex];
@@ -553,58 +517,25 @@
     }
     
     async function downloadImage() {
-        if (!authFileHandle) return alert("No auth image is currently loaded.");
+        if (!activeImageBlob) return alert("No auth image is currently loaded to download.");
         
-        const file = await authFileHandle.getFile();
+        const filename = 'myauth.png';
         
-        const filename = AUTH_FILENAME;
-        if ('showSaveFilePicker' in window) {
-            try {
-                const handle = await window.showSaveFilePicker({ suggestedName: filename, types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }], startIn: 'downloads' });
-                const writable = await handle.createWritable();
-                await writable.write(file);
-                await writable.close();
-            } catch (err) {	
-                if (err.name !== 'AbortError') console.error("Download Error:", err);	
-            }
-        } else {
-            const url = URL.createObjectURL(file);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
+        // Use the in-memory Blob
+        const url = URL.createObjectURL(activeImageBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
     }
     
-    // FIX: Updated clearData to reliably delete the file from OPFS
-    async function clearData(isError = false) {
-        if (!isError && !confirm("Are you sure you want to clear the loaded data and start over? This will delete the myauth.png file from your browser's private storage.")) {
-            return;
-        }
-
-        localStorage.removeItem(USERNAME_KEY);
-        
-        try {
-            const root = await navigator.storage.getDirectory();
-            // Use getFileHandle to find the file
-            const fileHandleToDelete = await root.getFileHandle(AUTH_FILENAME); 
-            
-            // Use the modern and reliable .remove() method
-            await fileHandleToDelete.remove(); 
-            console.log(`${AUTH_FILENAME} successfully deleted from OPFS.`);
-
-        } catch(e) {
-            // It's normal for a NotFoundError if the file was never created or already deleted
-            if (e.name !== 'NotFoundError') {
-                console.error("Error during OPFS file removal:", e);
-            } else {
-                console.log("File was not found, assumed already deleted.");
-            }
-        }
-        
-        // Ensure global state is reset after deletion attempt
-        authFileHandle = null; 
+    // Now only clears the in-memory state and resets the UI
+    function clearData() {
+        // NOTE: We keep localStorage username for convenience, only clear active data
+        activeImageData = null;
+        activeUsername = null;
+        activeImageBlob = null;
         renderLoaderView();
     }
   </script>
