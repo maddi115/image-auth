@@ -139,7 +139,7 @@
 </head>
 <body>
   <h1>Image Auth System</h1>
-  <p class="subtitle">A secure viewer for your auth image data. (CPU ONLY)</p>
+  <p class="subtitle">A secure viewer for your auth image data. (CPU + AES-256 Encrypted)</p>
 
   <div id="main-section" class="section">
     <div id="statusMessage" class="status" style="display:none;">Initializing...</div>
@@ -176,6 +176,8 @@
     const DATA_HASH_SIZE = 32;
     const USERNAME_KEY = 'authUsername';
     const MAX_USERNAME_LENGTH = 32;
+    const ENCRYPTION_ALGORITHM = 'AES-GCM';
+    const IV_LENGTH = 12; // 12 bytes for AES-GCM
 
     // Global state for the active image data and username
     let activeImageData = null; 
@@ -263,10 +265,14 @@
         const userId = usernameHash ^ imageHash;
         
         // Create a non-empty payload to ensure integrity check works
-        // We'll embed a marker that proves the data hasn't been tampered with
         const markerBytes = new TextEncoder().encode('INIT');
-        const dataIntegrityHash = await cryptoHash(markerBytes);
-        const header = createHeader(imageHash, userId, markerBytes.length, dataIntegrityHash, markerBytes);
+        
+        // Encrypt the payload before embedding
+        const encryptedPayload = await encryptData(markerBytes, userId);
+        
+        // Calculate integrity hash of the ENCRYPTED payload
+        const dataIntegrityHash = await cryptoHash(encryptedPayload);
+        const header = createHeader(imageHash, userId, encryptedPayload.length, dataIntegrityHash, encryptedPayload);
         
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
@@ -344,17 +350,24 @@
       let websites = [];
       let websitesBytes = new Uint8Array(0);
       
-      // CRITICAL FIX: Always extract and verify the payload if length > 0
+      // CRITICAL: Always extract and verify the payload if length > 0
       if (websitesDataLength > 0) {
         // Extract the full payload (Header + Websites) using CPU stego
         const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
-        websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
+        const encryptedPayload = fullPayloadBytes.slice(HEADER_SIZE);
         
-        // 2. Verify Data Integrity Hash BEFORE processing
-        const computedIntegrityHash = await cryptoHash(websitesBytes);
+        // 2. Verify Data Integrity Hash of ENCRYPTED payload BEFORE decryption
+        const computedIntegrityHash = await cryptoHash(encryptedPayload);
         
         if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
           throw new Error("Integrity check failed: Embedded data has been tampered with.");
+        }
+        
+        // 3. Decrypt the payload after integrity check passes
+        try {
+          websitesBytes = await decryptData(encryptedPayload, userId);
+        } catch (decryptError) {
+          throw new Error("Decryption failed: Invalid encryption key or corrupted data.");
         }
         
         // Only decode websites if integrity passes and it's not the marker
@@ -393,6 +406,81 @@
     async function cryptoHash(data) {
       const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
       return new Uint8Array(hashBuffer);
+    }
+
+    // --- Encryption/Decryption Functions ---
+    
+    // Derive an AES-GCM encryption key from the userId
+    async function deriveEncryptionKey(userId) {
+      // Convert userId to bytes
+      const userIdBytes = new Uint8Array(8);
+      const view = new DataView(userIdBytes.buffer);
+      view.setBigUint64(0, userId, true);
+      
+      // Use PBKDF2 to derive a proper key from the userId
+      const baseKey = await window.crypto.subtle.importKey(
+        'raw',
+        userIdBytes,
+        'PBKDF2',
+        false,
+        ['deriveBits', 'deriveKey']
+      );
+      
+      // Derive AES-GCM key
+      const key = await window.crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: new Uint8Array([0x73, 0x61, 0x6c, 0x74, 0x79, 0x21, 0x32, 0x33]), // Static salt "salty!23"
+          iterations: 100000,
+          hash: 'SHA-256'
+        },
+        baseKey,
+        { name: ENCRYPTION_ALGORITHM, length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+      
+      return key;
+    }
+    
+    // Encrypt data using AES-GCM
+    async function encryptData(data, userId) {
+      const key = await deriveEncryptionKey(userId);
+      
+      // Generate random IV
+      const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+      
+      // Encrypt the data
+      const encryptedBuffer = await window.crypto.subtle.encrypt(
+        { name: ENCRYPTION_ALGORITHM, iv: iv },
+        key,
+        data
+      );
+      
+      // Combine IV + encrypted data
+      const encryptedData = new Uint8Array(IV_LENGTH + encryptedBuffer.byteLength);
+      encryptedData.set(iv, 0);
+      encryptedData.set(new Uint8Array(encryptedBuffer), IV_LENGTH);
+      
+      return encryptedData;
+    }
+    
+    // Decrypt data using AES-GCM
+    async function decryptData(encryptedData, userId) {
+      const key = await deriveEncryptionKey(userId);
+      
+      // Extract IV and encrypted payload
+      const iv = encryptedData.slice(0, IV_LENGTH);
+      const ciphertext = encryptedData.slice(IV_LENGTH);
+      
+      // Decrypt the data
+      const decryptedBuffer = await window.crypto.subtle.decrypt(
+        { name: ENCRYPTION_ALGORITHM, iv: iv },
+        key,
+        ciphertext
+      );
+      
+      return new Uint8Array(decryptedBuffer);
     }
 
     function sanitizeUsername(rawUsername) {
