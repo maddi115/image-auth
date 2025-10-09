@@ -280,11 +280,14 @@
         const markerBytes = new TextEncoder().encode('INIT');
         
         // Encrypt the payload before embedding
-        const { encryptedData: encryptedPayload, salt } = await encryptData(markerBytes, userId);
+        const encryptResult = await encryptData(markerBytes, userId);
+        const encryptedPayload = encryptResult.encryptedData;
+        const salt = encryptResult.salt;
         
-        // Calculate integrity hash of the ENCRYPTED payload
-        const dataIntegrityHash = await cryptoHash(encryptedPayload);
-        const header = createHeader(imageHash, userId, encryptedPayload.length, dataIntegrityHash, encryptedPayload, salt);
+        // Calculate integrity hash of the ENCRYPTED payload (excluding the salt prefix)
+        const payloadWithoutSalt = encryptedPayload.slice(SALT_LENGTH);
+        const dataIntegrityHash = await cryptoHash(payloadWithoutSalt);
+        const header = createHeader(imageHash, userId, payloadWithoutSalt.length, dataIntegrityHash, payloadWithoutSalt, salt);
         
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
@@ -386,18 +389,18 @@
       if (websitesDataLength > 0) {
         // Extract the full payload (Header + Websites) using CPU stego
         const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
-        const encryptedPayload = fullPayloadBytes.slice(HEADER_SIZE);
+        const encryptedPayloadWithoutSalt = fullPayloadBytes.slice(HEADER_SIZE);
         
         // 2. Verify Data Integrity Hash of ENCRYPTED payload BEFORE decryption
-        const computedIntegrityHash = await cryptoHash(encryptedPayload);
+        const computedIntegrityHash = await cryptoHash(encryptedPayloadWithoutSalt);
         
         if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
           throw new Error("Integrity check failed: Embedded data has been tampered with.");
         }
         
-        // 3. Decrypt the payload after integrity check passes
+        // 3. Decrypt the payload after integrity check passes (salt comes from header)
         try {
-          websitesBytes = await decryptData(encryptedPayload, userId, encryptionSalt);
+          websitesBytes = await decryptData(encryptedPayloadWithoutSalt, userId, encryptionSalt);
         } catch (decryptError) {
           throw new Error("Decryption failed: Invalid encryption key or corrupted data.");
         }
