@@ -171,24 +171,30 @@
   <canvas id="workingCanvas" style="display:none;"></canvas>
 
   <script>
-    const HEADER_SIZE = 18;
+    // Header size is now 50 bytes: 8 (Image Hash) + 8 (User ID) + 32 (Data Hash/Integrity) + 2 (Websites Length)
+    const HEADER_SIZE = 50; 
+    const DATA_HASH_SIZE = 32;
     const AUTH_FILENAME = 'myauth.png';
     const USERNAME_KEY = 'authUsername';
+    const MAX_USERNAME_LENGTH = 32;
+    const MAX_WEBSITES_DATA_LENGTH = 1024 * 5; // 5KB limit for total website data
 
     // Global state for File Handle
     let authFileHandle = null;
 
-    /**
-     * Steganography Operation Mode
-     * 0: Extract (Default)
-     * 1: Embed
-     */
     const StegoMode = { EXTRACT: 0, EMBED: 1 };
 
 
     // --- Core Initialization and Rendering ---
 
     window.onload = async function() {
+      // Check for the necessary Web Crypto API support
+      if (!window.crypto || !window.crypto.subtle) {
+        document.getElementById('statusMessage').innerText = "FATAL ERROR: Web Crypto API not supported. Upgrade your browser.";
+        document.getElementById('statusMessage').style.display = 'block';
+        return;
+      }
+      
       // Attempt to initialize OPFS
       const isOpfsReady = await initializeOPFS();
 
@@ -200,7 +206,6 @@
           renderLoaderView();
         }
       } else {
-        // FATAL error if OPFS is not supported or is blocked
         document.getElementById('statusMessage').innerText = "FATAL ERROR: File System Access API not supported by your browser or is blocked (e.g., must run over HTTPS/localhost).";
         document.getElementById('statusMessage').style.display = 'block';
       }
@@ -220,7 +225,6 @@
         document.getElementById('statusMessage').innerText = "Reading data from auth image...";
         document.getElementById('statusMessage').style.display = 'block';
         
-        // Read data directly from the OPFS file handle
         const { userId, websites } = await readImageDataFromOPFS(username);
         
         document.getElementById('statusMessage').style.display = 'none';
@@ -234,7 +238,7 @@
           `<strong>User ID:</strong> ${userId.toString(16)}<br><br>` +
           `<strong style="font-weight:500;">Websites With My Profile</strong>` + websiteListHtml;
       } catch (e) {
-        alert("Error reading loaded image data. Was the username correct?\n" + e.message);
+        alert("Error reading loaded image data. Was the username correct? Is the data tampered with?\n" + e.message);
         clearData();
       }
     }
@@ -246,53 +250,56 @@
       if (!window.showDirectoryPicker) return false;
       try {
         const root = await navigator.storage.getDirectory();
-        // Check if the file exists in OPFS
         try {
           authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: false });
         } catch (e) {
-          // File doesn't exist yet, but OPFS is ready. authFileHandle remains null.
           authFileHandle = null;
         }
         document.getElementById('statusMessage').style.display = 'none';
         return true;
       } catch (e) {
-        // Catch SecurityError if not running on HTTPS/localhost
         console.error("OPFS initialization failed:", e);
         return false;
       }
     }
 
-    // --- User Actions ---
+    // --- User Actions (Creation/Loading) ---
 
     async function createAndLoad() {
-      const username = document.getElementById('createUsername').value.trim();
-      const imageFile = document.getElementById('createImage').files[0];
-      if (!username || !imageFile) return alert('Please provide a username and select a base image.');
-      if (authFileHandle) return alert('An auth file already exists. Please clear data first.');
-
       try {
+        // --- UPDATE 3: Input Validation ---
+        const rawUsername = document.getElementById('createUsername').value;
+        const username = sanitizeUsername(rawUsername);
+        const imageFile = document.getElementById('createImage').files[0];
+        
+        if (!username) return alert('Please enter a valid username (max ' + MAX_USERNAME_LENGTH + ' characters).');
+        if (!imageFile) return alert('Please select a base image.');
+        if (authFileHandle) return alert('An auth file already exists. Please clear data first.');
+
         document.getElementById('statusMessage').innerText = "Creating and embedding data...";
         document.getElementById('statusMessage').style.display = 'block';
 
         const imageData = await loadImageFileToImageData(imageFile);
         const originalBytes = new Uint8Array(await imageFile.arrayBuffer());
         
-        // --- UPDATE 1: Use cryptoHash (SHA-256) instead of simpleHash ---
+        // Calculate necessary hashes and IDs
         const imageHashBytes = await cryptoHash(originalBytes);
         const usernameHashBytes = await cryptoHash(new TextEncoder().encode(username));
 
-        // Take the first 8 bytes (64-bit BigInt) of the SHA-256 hash for Image Hash and User Hash
         const imageHash = new DataView(imageHashBytes.buffer).getBigUint64(0, true);
         const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
         
         const userId = usernameHash ^ imageHash;
         
-        const header = createHeader(imageHash, userId, 0, new Uint8Array(0));
+        // Initial data: empty websites list
+        const emptyWebsitesBytes = new Uint8Array(0);
+        // --- UPDATE 2: Calculate Data Integrity Hash ---
+        const dataIntegrityHash = await cryptoHash(emptyWebsitesBytes);
         
-        // Use CPU stego logic to embed data
+        const header = createHeader(imageHash, userId, emptyWebsitesBytes.length, dataIntegrityHash, emptyWebsitesBytes);
+        
         const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
         
-        // Write new image data to OPFS
         await writeImageDataToOPFS(newImageData);
         
         localStorage.setItem(USERNAME_KEY, username);
@@ -308,15 +315,18 @@
       if (!authImageFile) return alert('Please select your myauth.png file.');
 
       try {
-        const tempUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
-        if (!tempUsername) return;
+        const rawUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
+        if (!rawUsername) return;
+        // --- UPDATE 3: Input Validation ---
+        const tempUsername = sanitizeUsername(rawUsername);
+        if (!tempUsername) throw new Error('Invalid username entered for verification.');
 
         document.getElementById('statusMessage').innerText = "Verifying and saving file to OPFS...";
         document.getElementById('statusMessage').style.display = 'block';
 
         const imageData = await loadImageFileToImageData(authImageFile);
         
-        // Validate the image by extracting the header (uses CPU stego)
+        // This readImageData now includes the new integrity checks
         await readImageData(imageData, tempUsername);
 
         // Save the valid image to OPFS
@@ -331,68 +341,11 @@
 
       } catch(e) {
         document.getElementById('statusMessage').style.display = 'none';
-        alert(`Could not load auth image. Is it a valid file with the correct username?\n\nError: ${e.message}`);
-      }
-    }
-
-    async function downloadImage() {
-      if (!authFileHandle) return alert("No auth image is currently loaded.");
-      
-      const file = await authFileHandle.getFile();
-      
-      const filename = AUTH_FILENAME;
-      if ('showSaveFilePicker' in window) {
-        try {
-          const handle = await window.showSaveFilePicker({ suggestedName: filename, types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }], startIn: 'downloads' });
-          const writable = await handle.createWritable();
-          await writable.write(file);
-          await writable.close();
-        } catch (err) { 
-            if (err.name !== 'AbortError') console.error("Download Error:", err); 
-        }
-      } else {
-        // Fallback for older browsers
-        const url = URL.createObjectURL(file);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    }
-    
-    async function clearData() {
-      if (confirm("Are you sure you want to clear the loaded data and start over? This will delete the myauth.png file from your browser's private storage.")) {
-        localStorage.removeItem(USERNAME_KEY);
-        authFileHandle = null;
-        try {
-          const root = await navigator.storage.getDirectory();
-          await root.removeEntry(AUTH_FILENAME);
-        } catch(e) {
-          // File likely didn't exist, which is fine.
-        }
-        renderLoaderView();
+        alert(`Could not load auth image. ${e.message}`);
       }
     }
 
     // --- Data Read/Write Helpers ---
-
-    async function writeImageDataToOPFS(imageData) {
-        const canvas = document.getElementById('workingCanvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = imageData.width;
-        canvas.height = imageData.height;
-        ctx.putImageData(imageData, 0, 0);
-
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-        
-        const root = await navigator.storage.getDirectory();
-        authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: true });
-        
-        const writable = await authFileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-    }
 
     async function readImageDataFromOPFS(username) {
         if (!authFileHandle) throw new Error("No file handle available.");
@@ -408,163 +361,251 @@
       const headerView = new DataView(headerBytes.buffer);
       const imageHash = headerView.getBigUint64(0, true);
       const userId = headerView.getBigUint64(8, true);
-      const websitesDataLength = headerView.getUint16(16, true);
+      const integrityHashBytes = headerBytes.slice(16, 16 + DATA_HASH_SIZE); // 32 bytes
+      const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE, true); // Starts at index 48
       
+      // 1. Verify User ID (Authentication)
       if (usernameToVerify) {
-        // --- UPDATE 1: Use cryptoHash (SHA-256) instead of simpleHash ---
         const usernameHashBytes = await cryptoHash(new TextEncoder().encode(usernameToVerify));
         const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
         const computedUserId = usernameHash ^ imageHash;
 
         if (userId !== computedUserId) {
-          throw new Error("Username does not match the data in this image file.");
+          throw new Error("Authentication failed: Username does not match the file's data.");
         }
       }
       
       let websites = [];
+      let websitesBytes = new Uint8Array(0);
+      
       if (websitesDataLength > 0) {
         // Extract the full payload (Header + Websites) using CPU stego
         const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
-        const websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
+        websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
         websites = new TextDecoder().decode(websitesBytes).split('\0').filter(Boolean);
+        
+        // --- UPDATE 2: Verify Data Integrity Hash ---
+        const computedIntegrityHash = await cryptoHash(websitesBytes);
+        
+        if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
+          throw new Error("Integrity check failed: Embedded data has been tampered with.");
+        }
       }
       
       return { userId, imageHash, websites };
     }
 
-    function createHeader(imageHash, userId, websitesLength, websitesBytes) {
+    // --- UPDATE 2: New Header Creation Function ---
+    function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes) {
       const dataToEmbed = new Uint8Array(HEADER_SIZE + websitesLength);
       const dataView = new DataView(dataToEmbed.buffer);
+      
+      // 1. Image Hash (8 bytes)
       dataView.setBigUint64(0, imageHash, true);
+      // 2. User ID (8 bytes)
       dataView.setBigUint64(8, userId, true);
-      dataView.setUint16(16, websitesLength, true);
+      // 3. Data Integrity Hash (32 bytes)
+      dataToEmbed.set(dataIntegrityHashBytes, 16);
+      // 4. Websites Length (2 bytes)
+      dataView.setUint16(16 + DATA_HASH_SIZE, websitesLength, true); // Starts at index 48
+      // 5. Websites Data
       dataToEmbed.set(websitesBytes, HEADER_SIZE);
+      
       return dataToEmbed;
     }
 
 
-    // --- Generic Utilities (Re-used) ---
+    // --- Generic Utilities (Updated) ---
+    
+    // Helper function to compare two Uint8Arrays (used for integrity hash check)
+    function arraysEqual(a, b) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+      }
+      return true;
+    }
 
-    /**
-     * Generates a cryptographically secure SHA-256 hash.
-     * @param {Uint8Array} data - The data to hash (e.g., image bytes, username bytes).
-     * @returns {Promise<Uint8Array>} A Promise that resolves with the 32-byte hash.
-     */
     async function cryptoHash(data) {
-      // If the browser doesn't support the Web Crypto API, this will fail gracefully.
       const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
       return new Uint8Array(hashBuffer);
     }
-    
-    // The old simpleHash function is removed as it's no longer used.
-    
-    function loadImageFileToImageData(file) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        const reader = new FileReader();
-        
-        reader.onload = (e) => {
-          img.onload = () => { 
-            // CRITICAL FIX: Check for valid dimensions before proceeding (prevents "zero elements" error)
-            if (img.width === 0 || img.height === 0) {
-                return reject(new Error("Image loaded with zero width or height. Ensure the file is a valid, non-corrupted image format (PNG or JPEG)."));
-            }
 
-            const canvas = document.getElementById('workingCanvas');
-            // Set willReadFrequently for performance when calling getImageData multiple times
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            canvas.width = img.width; 
-            canvas.height = img.height; 
-            ctx.drawImage(img, 0, 0); 
-            
-            // The dimensions are now confirmed non-zero
-            resolve(ctx.getImageData(0, 0, img.width, img.height)); 
-          };
-          img.onerror = () => reject(new Error("Image loading failed (img.onerror triggered).")); 
-          img.src = e.target.result;
-        };
-        reader.onerror = () => reject(new Error("File reading failed (reader.onerror triggered).")); 
-        reader.readAsDataURL(file);
-      });
+    // --- UPDATE 3: Input Validation and Sanitization Functions ---
+
+    function sanitizeUsername(rawUsername) {
+      const username = rawUsername.trim();
+      // Strip out control characters and the data separator character (null byte)
+      let cleanUsername = username.replace(/[\u0000-\u001F]/g, '');
+      
+      if (cleanUsername.length === 0 || cleanUsername.length > MAX_USERNAME_LENGTH) {
+        return null; // Invalid or empty after cleaning
+      }
+      return cleanUsername;
     }
+    
+    // You would use this if you had an add/update function for websites:
+    // function sanitizeWebsites(websitesArray) {
+    //   let cleanArray = websitesArray.map(w => w.trim().replace(/[\u0000-\u001F]/g, ''));
+    //   cleanArray = cleanArray.filter(w => w.length > 0);
+    //   
+    //   // Check if total length exceeds capacity
+    //   const bytes = new TextEncoder().encode(cleanArray.join('\0'));
+    //   if (bytes.length > MAX_WEBSITES_DATA_LENGTH) {
+    //     throw new Error("Total website data exceeds capacity.");
+    //   }
+    //   return cleanArray;
+    // }
 
-    // --- CPU Steganography Implementation ---
+    // The rest of the OPFS, Image Loading, and Stego functions are unchanged/omitted for brevity
+    
+    // Existing downloadImage, clearData, writeImageDataToOPFS, loadImageFileToImageData, runStegoCPU
+    // functions go here... (using the original logic)
 
-    /**
-     * Executes the LSB steganography logic on the CPU.
-     * @param {ImageData} imageData - The source image data.
-     * @param {Uint8Array} dataPayload - Data to embed (mode=1) or a placeholder array to fill (mode=0).
-     * @param {number} mode - 0 for EXTRACT, 1 for EMBED.
-     * @returns {Uint8Array|ImageData} The resulting payload (extract) or new image data (embed).
-     */
-    function runStegoCPU(imageData, dataPayload, mode) {
-        const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
-        
-        let totalPayloadBits = dataPayload.length * 8; 
-        
-        if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
-            throw new Error("Data too large for image capacity.");
-        }
+    async function writeImageDataToOPFS(imageData) {
+        const canvas = document.getElementById('workingCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = imageData.width;
+        canvas.height = imageData.height;
+        ctx.putImageData(imageData, 0, 0);
 
-        if (mode === StegoMode.EMBED) {
-            let dataIndex = 0; // Index into dataPayload byte array
-            let bitOffset = 7; // Bit position within the dataPayload byte (from 7 down to 0)
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        
+        const root = await navigator.storage.getDirectory();
+        authFileHandle = await root.getFileHandle(AUTH_FILENAME, { create: true });
+        
+        const writable = await authFileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+    }
 
-            for (let i = 0; i < data.length; i++) {
-                // Skip Alpha channel (index i % 4 === 3)
-                if ((i % 4) === 3) continue; 
-                
-                if (totalPayloadBits <= 0) break;
+    function loadImageFileToImageData(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+                img.onload = () => {	
+                    if (img.width === 0 || img.height === 0) {
+                        return reject(new Error("Image loaded with zero width or height."));
+                    }
 
-                // 1. Get the payload bit (from most significant bit down)
-                const payloadByte = dataPayload[dataIndex];
-                const payloadBit = (payloadByte >> bitOffset) & 1;
+                    const canvas = document.getElementById('workingCanvas');
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    canvas.width = img.width;	
+                    canvas.height = img.height;	
+                    ctx.drawImage(img, 0, 0);	
+                    
+                    resolve(ctx.getImageData(0, 0, img.width, img.height));	
+                };
+                img.onerror = () => reject(new Error("Image loading failed (img.onerror triggered)."));	
+                img.src = e.target.result;
+            };
+            reader.onerror = () => reject(new Error("File reading failed (reader.onerror triggered)."));	
+            reader.readAsDataURL(file);
+        });
+    }
 
-                // 2. Embed the bit (LSB) into the image channel
-                data[i] = (data[i] & 0xFE) | payloadBit;
+    /**
+     * Executes the LSB steganography logic on the CPU.
+     */
+    function runStegoCPU(imageData, dataPayload, mode) {
+        const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
+        
+        let totalPayloadBits = dataPayload.length * 8;	
+        
+        // We embed 3 bits per pixel (R, G, B channels)
+        if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
+            throw new Error("Data too large for image capacity.");
+        }
 
-                // 3. Advance to the next payload bit
-                bitOffset--;
-                if (bitOffset < 0) {
-                    bitOffset = 7;
-                    dataIndex++;
-                }
+        if (mode === StegoMode.EMBED) {
+            let dataIndex = 0; 
+            let bitOffset = 7; 
 
-                totalPayloadBits--; // Decrementing the now-allowed 'let' variable
-            }
+            for (let i = 0; i < data.length; i++) {
+                if ((i % 4) === 3) continue;	
+                
+                if (totalPayloadBits <= 0) break;
 
-            // Return the modified ImageData object
-            return imageData;
+                const payloadByte = dataPayload[dataIndex];
+                const payloadBit = (payloadByte >> bitOffset) & 1;
 
-        } else { // StegoMode.EXTRACT
-            const extractedBytes = new Uint8Array(dataPayload.length);
-            let dataIndex = 0; // Index into extractedBytes byte array
-            let bitOffset = 7; // Bit position within the extractedBytes byte (from 7 down to 0)
+                data[i] = (data[i] & 0xFE) | payloadBit;
 
-            for (let i = 0; i < data.length; i++) {
-                // Skip Alpha channel (index i % 4 === 3)
-                if ((i % 4) === 3) continue;
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
 
-                if (dataIndex >= extractedBytes.length) break;
+                totalPayloadBits--; 
+            }
+            return imageData;
 
-                // 1. Extract the LSB of the image channel
-                const extractedBit = data[i] & 1;
+        } else { // StegoMode.EXTRACT
+            const extractedBytes = new Uint8Array(dataPayload.length);
+            let dataIndex = 0; 
+            let bitOffset = 7; 
 
-                // 2. Write the bit into the extractedBytes byte array
-                extractedBytes[dataIndex] |= (extractedBit << bitOffset);
+            for (let i = 0; i < data.length; i++) {
+                if ((i % 4) === 3) continue;
 
-                // 3. Advance to the next bit position
-                bitOffset--;
-                if (bitOffset < 0) {
-                    bitOffset = 7;
-                    dataIndex++;
-                }
-            }
-            
-            // Return the extracted payload
-            return extractedBytes;
-        }
-    }
+                if (dataIndex >= extractedBytes.length) break;
+
+                const extractedBit = data[i] & 1;
+
+                extractedBytes[dataIndex] |= (extractedBit << bitOffset);
+
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
+            }
+            return extractedBytes;
+        }
+    }
+    
+    async function downloadImage() {
+        if (!authFileHandle) return alert("No auth image is currently loaded.");
+        
+        const file = await authFileHandle.getFile();
+        
+        const filename = AUTH_FILENAME;
+        if ('showSaveFilePicker' in window) {
+            try {
+                const handle = await window.showSaveFilePicker({ suggestedName: filename, types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }], startIn: 'downloads' });
+                const writable = await handle.createWritable();
+                await writable.write(file);
+                await writable.close();
+            } catch (err) {	
+                if (err.name !== 'AbortError') console.error("Download Error:", err);	
+            }
+        } else {
+            const url = URL.createObjectURL(file);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    }
+    
+    async function clearData() {
+        if (confirm("Are you sure you want to clear the loaded data and start over? This will delete the myauth.png file from your browser's private storage.")) {
+            localStorage.removeItem(USERNAME_KEY);
+            authFileHandle = null;
+            try {
+                const root = await navigator.storage.getDirectory();
+                await root.removeEntry(AUTH_FILENAME);
+            } catch(e) {
+                // File likely didn't exist, which is fine.
+            }
+            renderLoaderView();
+        }
+    }
+    
   </script>
 </body>
 </html>
