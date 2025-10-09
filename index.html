@@ -1,543 +1,526 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Image-Based Auth System (CPU ONLY)</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
-  <style>
-    /* CSS styles remain the same for visual consistency */
-    :root {
-      --background: #ffffff;
-      --foreground: #020817;
-      --card: #ffffff;
-      --card-foreground: #020817;
-      --muted-foreground: #64748b;
-      --primary: #020817;
-      --primary-foreground: #f8fafc;
-      --secondary: #f1f5f9;
-      --secondary-foreground: #020817;
-      --border: #e2e8f0;
-      --input: #e2e8f0;
-      --ring: #94a3b8;
-    }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image-Based Auth System (CPU ONLY)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --background: #ffffff;
+      --foreground: #020817;
+      --card: #ffffff;
+      --card-foreground: #020817;
+      --muted-foreground: #64748b;
+      --primary: #020817;
+      --primary-foreground: #f8fafc;
+      --secondary: #f1f5f9;
+      --secondary-foreground: #020817;
+      --border: #e2e8f0;
+      --input: #e2e8f0;
+      --ring: #94a3b8;
+    }
 
-    body {
-      font-family: 'Inter', sans-serif;
-      max-width: 600px;
-      margin: 50px auto;
-      padding: 20px;
-      background: #f8fafc;
-      color: var(--foreground);
-    }
-    h1 {
-      font-size: 2.25rem;
-      font-weight: 700;
-      text-align: center;
-      letter-spacing: -0.05em;
-      color: var(--foreground);
-    }
-    h2 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      letter-spacing: -0.025em;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 10px;
-      margin-bottom: 20px;
-    }
-    .subtitle {
-      text-align: center;
-      color: var(--muted-foreground);
-      margin-top: -10px;
-      margin-bottom: 40px;
-    }
-    .section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      padding: 24px;
-      margin: 20px 0;
-      border-radius: 0.75rem;
-      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-    }
-    input, button {
-      display: block;
-      width: 100%;
-      padding: 10px 12px;
-      margin: 10px 0;
-      box-sizing: border-box;
-      font-family: 'Inter', sans-serif;
-      font-size: 14px;
-      border-radius: 0.5rem;
-      transition: all 0.2s ease-in-out;
-    }
-    input[type="text"], input[type="file"] {
-        background-color: var(--background);
-        border: 1px solid var(--input);
-    }
-    input[type="text"]:focus-visible {
-        box-shadow: 0 0 0 2px var(--foreground);
-        outline: none;
-    }
-    input[type="file"]::file-selector-button {
-        background: var(--secondary);
-        color: var(--secondary-foreground);
-        border: 0;
-        padding: 8px 12px;
-        border-radius: 0.375rem;
-        cursor: pointer;
-        margin-right: 12px;
-    }
-    input[type="file"]::file-selector-button:hover {
-        background: #e2e8f0;
-    }
-    button {
-      background: var(--primary);
-      color: var(--primary-foreground);
-      border: none;
-      cursor: pointer;
-      font-weight: 500;
-    }
-    button:hover {
-        background: rgba(2, 8, 23, 0.9);
-    }
-    button.secondary {
-      background: var(--secondary);
-      color: var(--secondary-foreground);
-      border: 1px solid var(--input);
-    }
-    button.secondary:hover {
-        background: #e2e8f0;
-    }
-    .output {
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      padding: 15px;
-      margin: 15px 0;
-      min-height: 50px;
-      word-break: break-all;
-      line-height: 1.6;
-      border-radius: 0.5rem;
-      font-size: 14px;
-    }
-    #websiteList {
-        padding-left: 20px;
-        margin: 10px 0 0 0;
-        list-style-type: disc;
-    }
-    hr {
-        border: none;
-        border-top: 1px solid var(--border);
-    }
-    .status {
-        font-weight: 500;
-        color: #ef4444; /* Red for error/loading */
-        margin-bottom: 10px;
-        text-align: center;
-    }
-  </style>
+    body {
+      font-family: 'Inter', sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f8fafc;
+      color: var(--foreground);
+    }
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: -0.05em;
+      color: var(--foreground);
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }
+    .subtitle {
+      text-align: center;
+      color: var(--muted-foreground);
+      margin-top: -10px;
+      margin-bottom: 40px;
+    }
+    .section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 24px;
+      margin: 20px 0;
+      border-radius: 0.75rem;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+    }
+    input, button {
+      display: block;
+      width: 100%;
+      padding: 10px 12px;
+      margin: 10px 0;
+      box-sizing: border-box;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      border-radius: 0.5rem;
+      transition: all 0.2s ease-in-out;
+    }
+    input[type="text"], input[type="file"] {
+        background-color: var(--background);
+        border: 1px solid var(--input);
+    }
+    input[type="text"]:focus-visible {
+        box-shadow: 0 0 0 2px var(--foreground);
+        outline: none;
+    }
+    input[type="file"]::file-selector-button {
+        background: var(--secondary);
+        color: var(--secondary-foreground);
+        border: 0;
+        padding: 8px 12px;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        margin-right: 12px;
+    }
+    input[type="file"]::file-selector-button:hover {
+        background: #e2e8f0;
+    }
+    button {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border: none;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button:hover {
+        background: rgba(2, 8, 23, 0.9);
+    }
+    button.secondary {
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border: 1px solid var(--input);
+    }
+    button.secondary:hover {
+        background: #e2e8f0;
+    }
+    .output {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      padding: 15px;
+      margin: 15px 0;
+      min-height: 50px;
+      word-break: break-all;
+      line-height: 1.6;
+      border-radius: 0.5rem;
+      font-size: 14px;
+    }
+    #websiteList {
+        padding-left: 20px;
+        margin: 10px 0 0 0;
+        list-style-type: disc;
+    }
+    hr {
+        border: none;
+        border-top: 1px solid var(--border);
+    }
+    .status {
+        font-weight: 500;
+        color: #ef4444;
+        margin-bottom: 10px;
+        text-align: center;
+    }
+  </style>
 </head>
 <body>
-  <h1>Image Auth System</h1>
-  <p class="subtitle">A secure viewer for your auth image data. (CPU ONLY)</p>
+  <h1>Image Auth System</h1>
+  <p class="subtitle">A secure viewer for your auth image data. (CPU ONLY)</p>
 
-  <div id="main-section" class="section">
-    <div id="statusMessage" class="status" style="display:none;">Initializing...</div>
-    
-    <div id="loader-view">
-      <h2>Load Auth Image</h2>
-      <div class="output">
-        To start, either create a new auth image or upload your existing "myauth.png".
-      </div>
-      <input type="text" id="createUsername" placeholder="Enter a new username">
-      <input type="file" id="createImage" accept="image/png, image/jpeg">
-      <button id="createButton" onclick="createAndLoad()">Create New Auth Image</button>
-      <hr style="margin: 20px 0;">
-      <input type="file" id="uploadAuthImage" accept="image/png">
-      <button id="uploadButton" onclick="uploadAndLoad()" class="secondary">Upload Existing myauth.png</button>
-    </div>
+  <div id="main-section" class="section">
+    <div id="statusMessage" class="status" style="display:none;">Initializing...</div>
+    
+    <div id="loader-view">
+      <h2>Load Auth Image</h2>
+      <div class="output">
+        To start, either create a new auth image or upload your existing "myauth.png".
+      </div>
+      <input type="text" id="createUsername" placeholder="Enter a new username">
+      <input type="file" id="createImage" accept="image/png, image/jpeg">
+      <button id="createButton" onclick="createAndLoad()">Create New Auth Image</button>
+      <hr style="margin: 20px 0;">
+      <input type="file" id="uploadAuthImage" accept="image/png">
+      <button id="uploadButton" onclick="uploadAndLoad()" class="secondary">Upload Existing myauth.png</button>
+    </div>
 
-    <div id="editor-view" style="display: none;">
-      <h2>Auth Data Loaded</h2>
-      <div class="output" id="userDataOutput"></div>
-      
-      <hr style="margin: 20px 0;">
+    <div id="editor-view" style="display: none;">
+      <h2>Auth Data Loaded</h2>
+      <div class="output" id="userDataOutput"></div>
+      
+      <hr style="margin: 20px 0;">
 
-            <button id="downloadBtn" onclick="downloadImage()">Download myauth.png</button>
-      <button onclick="clearData()" class="secondary">Close View (Clear Memory)</button>
-    </div>
-  </div>
+      <button id="downloadBtn" onclick="downloadImage()">Download myauth.png</button>
+      <button onclick="clearData()" class="secondary">Close View (Clear Memory)</button>
+    </div>
+  </div>
 
-  <canvas id="workingCanvas" style="display:none;"></canvas>
+  <canvas id="workingCanvas" style="display:none;"></canvas>
 
-  <script>
-    // Constants
-    const HEADER_SIZE = 50; 
-    const DATA_HASH_SIZE = 32;
-    const USERNAME_KEY = 'authUsername';
-    const MAX_USERNAME_LENGTH = 32;
-    // Removed AUTH_FILENAME as it's not needed for persistent storage
+  <script>
+    // Constants
+    const HEADER_SIZE = 50; 
+    const DATA_HASH_SIZE = 32;
+    const USERNAME_KEY = 'authUsername';
+    const MAX_USERNAME_LENGTH = 32;
 
-    // Global state for the active image data and username
-    let activeImageData = null; 
-    let activeUsername = null;
-    let activeImageBlob = null; // Store the final blob for the download button
+    // Global state for the active image data and username
+    let activeImageData = null; 
+    let activeUsername = null;
+    let activeImageBlob = null;
+    let activeOriginalImageHash = null; // Store the original image hash for filename
 
-    const StegoMode = { EXTRACT: 0, EMBED: 1 };
+    const StegoMode = { EXTRACT: 0, EMBED: 1 };
 
+    // --- Core Initialization and Rendering ---
 
-    // --- Core Initialization and Rendering ---
+    window.onload = async function() {
+      if (!window.crypto || !window.crypto.subtle) {
+        document.getElementById('statusMessage').innerText = "FATAL ERROR: Web Crypto API not supported. Upgrade your browser.";
+        document.getElementById('statusMessage').style.display = 'block';
+        return;
+      }
+      
+      renderLoaderView();
+    };
 
-    window.onload = async function() {
-      // Check for the necessary Web Crypto API support
-      if (!window.crypto || !window.crypto.subtle) {
-        document.getElementById('statusMessage').innerText = "FATAL ERROR: Web Crypto API not supported. Upgrade your browser.";
-        document.getElementById('statusMessage').style.display = 'block';
-        return;
-      }
-      
-      // Since OPFS is removed, we check localStorage for the last used username 
-      // to pre-fill the form, but we render the loader view.
-      renderLoaderView();
-    };
+    function renderLoaderView() {
+      document.getElementById('statusMessage').style.display = 'none';
+      document.getElementById('loader-view').style.display = 'block';
+      document.getElementById('editor-view').style.display = 'none';
+      
+      const lastUsername = localStorage.getItem(USERNAME_KEY);
+      if (lastUsername) {
+        document.getElementById('createUsername').value = lastUsername;
+      }
+    }
 
-    function renderLoaderView() {
-      document.getElementById('statusMessage').style.display = 'none';
-      document.getElementById('loader-view').style.display = 'block';
-      document.getElementById('editor-view').style.display = 'none';
-      
-      // Optional: Load last used username for convenience
-      const lastUsername = localStorage.getItem(USERNAME_KEY);
-      if (lastUsername) {
-        document.getElementById('createUsername').value = lastUsername;
-      }
-    }
+    async function renderEditorView() {
+      if (!activeImageData || !activeUsername) {
+        return renderLoaderView();
+      }
+      
+      document.getElementById('loader-view').style.display = 'none';
+      document.getElementById('editor-view').style.display = 'block';
 
-    async function renderEditorView() {
-      if (!activeImageData || !activeUsername) {
-        return renderLoaderView(); // Fallback if data is missing
-      }
-      
-      document.getElementById('loader-view').style.display = 'none';
-      document.getElementById('editor-view').style.display = 'block';
+      try {
+        document.getElementById('statusMessage').innerText = "Reading data from auth image...";
+        document.getElementById('statusMessage').style.display = 'block';
+        
+        const { userId, websites } = await readImageData(activeImageData, activeUsername);
+        
+        document.getElementById('statusMessage').style.display = 'none';
 
-      try {
-        document.getElementById('statusMessage').innerText = "Reading data from auth image...";
-        document.getElementById('statusMessage').style.display = 'block';
-        
-        // Read the data from the active, in-memory ImageData
-        const { userId, websites } = await readImageData(activeImageData, activeUsername);
-        
-        document.getElementById('statusMessage').style.display = 'none';
+        let websiteListHtml = websites.length > 0
+          ? '<ul id="websiteList">' + websites.map(w => `<li>${w}</li>`).join('') + '</ul>'
+          : '<p style="color:var(--muted-foreground); margin-top: 8px;">No websites have been added yet.</p>';
+        
+        document.getElementById('userDataOutput').innerHTML =
+          `<strong>Username:</strong> ${activeUsername}<br>` +
+          `<strong>User ID:</strong> ${userId.toString(16)}<br><br>` +
+          `<strong style="font-weight:500;">Websites With My Profile</strong>` + websiteListHtml;
+      } catch (e) {
+        alert("Error reading loaded image data. Was the username correct? Is the data tampered with?\n" + e.message);
+        clearData();
+      }
+    }
 
-        let websiteListHtml = websites.length > 0
-          ? '<ul id="websiteList">' + websites.map(w => `<li>${w}</li>`).join('') + '</ul>'
-          : '<p style="color:var(--muted-foreground); margin-top: 8px;">No websites have been added yet.</p>';
-        
-        document.getElementById('userDataOutput').innerHTML =
-          `<strong>Username:</strong> ${activeUsername}<br>` +
-          `<strong>User ID:</strong> ${userId.toString(16)}<br><br>` +
-          `<strong style="font-weight:500;">Websites With My Profile</strong>` + websiteListHtml;
-      } catch (e) {
-        alert("Error reading loaded image data. Was the username correct? Is the data tampered with?\n" + e.message);
-        clearData(); // Clear memory state on major error
-      }
-    }
+    // --- User Actions (Creation/Loading) ---
 
-    // --- User Actions (Creation/Loading) ---
+    async function createAndLoad() {
+      try {
+        const rawUsername = document.getElementById('createUsername').value;
+        const username = sanitizeUsername(rawUsername);
+        const imageFile = document.getElementById('createImage').files[0];
+        
+        if (!username) return alert('Please enter a valid username (max ' + MAX_USERNAME_LENGTH + ' characters).');
+        if (!imageFile) return alert('Please select a base image.');
+        
+        document.getElementById('statusMessage').innerText = "Creating and embedding data...";
+        document.getElementById('statusMessage').style.display = 'block';
 
-    async function createAndLoad() {
-      try {
-        // Input Validation
-        const rawUsername = document.getElementById('createUsername').value;
-        const username = sanitizeUsername(rawUsername);
-        const imageFile = document.getElementById('createImage').files[0];
-        
-        if (!username) return alert('Please enter a valid username (max ' + MAX_USERNAME_LENGTH + ' characters).');
-        if (!imageFile) return alert('Please select a base image.');
-        
-        document.getElementById('statusMessage').innerText = "Creating and embedding data...";
-        document.getElementById('statusMessage').style.display = 'block';
+        const imageData = await loadImageFileToImageData(imageFile);
+        const originalBytes = new Uint8Array(await imageFile.arrayBuffer());
+        
+        const imageHashBytes = await cryptoHash(originalBytes);
+        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(username));
 
-        const imageData = await loadImageFileToImageData(imageFile);
-        const originalBytes = new Uint8Array(await imageFile.arrayBuffer());
-        
-        // Hashing and ID calculation
-        const imageHashBytes = await cryptoHash(originalBytes);
-        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(username));
+        const imageHash = new DataView(imageHashBytes.buffer).getBigUint64(0, true);
+        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
+        const userId = usernameHash ^ imageHash;
+        
+        // Create a non-empty payload to ensure integrity check works
+        // We'll embed a marker that proves the data hasn't been tampered with
+        const markerBytes = new TextEncoder().encode('INIT');
+        const dataIntegrityHash = await cryptoHash(markerBytes);
+        const header = createHeader(imageHash, userId, markerBytes.length, dataIntegrityHash, markerBytes);
+        
+        const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
+        
+        activeImageData = newImageData; 
+        activeUsername = username;
+        activeOriginalImageHash = imageHash;
+        
+        await updateActiveImageBlob(activeImageData); 
+        
+        localStorage.setItem(USERNAME_KEY, username);
+        renderEditorView();
+      } catch (e) {
+        document.getElementById('statusMessage').style.display = 'none';
+        alert("An error occurred during creation: " + e.message);
+        clearData();
+      }
+    }
 
-        const imageHash = new DataView(imageHashBytes.buffer).getBigUint64(0, true);
-        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
-        const userId = usernameHash ^ imageHash;
-        
-        // Embed header
-        const emptyWebsitesBytes = new Uint8Array(0);
-        const dataIntegrityHash = await cryptoHash(emptyWebsitesBytes);
-        const header = createHeader(imageHash, userId, emptyWebsitesBytes.length, dataIntegrityHash, emptyWebsitesBytes);
-        
-        const newImageData = runStegoCPU(imageData, header, StegoMode.EMBED);
-        
-        // Set global state for in-memory use
-        activeImageData = newImageData; 
-        activeUsername = username;
-        
-        // Generate Blob for immediate download
-        await updateActiveImageBlob(activeImageData); 
-        
-        localStorage.setItem(USERNAME_KEY, username);
-        renderEditorView();
-      } catch (e) {
-        document.getElementById('statusMessage').style.display = 'none';
-        alert("An error occurred during creation: " + e.message);
-        clearData();
-      }
-    }
+    async function uploadAndLoad() {
+      const authImageFile = document.getElementById('uploadAuthImage').files[0];
+      if (!authImageFile) return alert('Please select your myauth.png file.');
 
-    async function uploadAndLoad() {
-      const authImageFile = document.getElementById('uploadAuthImage').files[0];
-      if (!authImageFile) return alert('Please select your myauth.png file.');
+      try {
+        const rawUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
+        if (!rawUsername) return;
+        const tempUsername = sanitizeUsername(rawUsername);
+        if (!tempUsername) throw new Error('Invalid username entered for verification.');
 
-      try {
-        const rawUsername = prompt("Please enter the username associated with this auth file to verify it:", "");
-        if (!rawUsername) return;
-        // Input Validation
-        const tempUsername = sanitizeUsername(rawUsername);
-        if (!tempUsername) throw new Error('Invalid username entered for verification.');
+        document.getElementById('statusMessage').innerText = "Verifying auth file...";
+        document.getElementById('statusMessage').style.display = 'block';
 
-        document.getElementById('statusMessage').innerText = "Verifying auth file...";
-        document.getElementById('statusMessage').style.display = 'block';
+        const imageData = await loadImageFileToImageData(authImageFile);
+        
+        // This will throw an error if authentication or integrity fails
+        const { imageHash } = await readImageData(imageData, tempUsername);
 
-        const imageData = await loadImageFileToImageData(authImageFile);
-        
-        // Run all authentication and integrity checks
-        await readImageData(imageData, tempUsername);
+        activeImageData = imageData;
+        activeUsername = tempUsername;
+        activeOriginalImageHash = imageHash;
+        await updateActiveImageBlob(activeImageData);
 
-        // If successful, set global state
-        activeImageData = imageData;
-        activeUsername = tempUsername;
-        await updateActiveImageBlob(activeImageData);
+        localStorage.setItem(USERNAME_KEY, tempUsername);
+        renderEditorView();
 
-        localStorage.setItem(USERNAME_KEY, tempUsername);
-        renderEditorView();
+      } catch(e) {
+        document.getElementById('statusMessage').style.display = 'none';
+        alert(`Could not load auth image. ${e.message}`);
+        clearData();
+      }
+    }
 
-      } catch(e) {
-        document.getElementById('statusMessage').style.display = 'none';
-        alert(`Could not load auth image. ${e.message}`);
-        clearData();
-      }
-    }
+    // --- Data Read/Write Helpers ---
 
-    // --- Data Read/Write Helpers ---
+    async function readImageData(imageData, usernameToVerify) {
+      // Extract the header (HEADER_SIZE bytes) using CPU stego
+      const headerBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE), StegoMode.EXTRACT);
 
-    async function readImageData(imageData, usernameToVerify) {
-      // Extract the header (HEADER_SIZE bytes) using CPU stego
-      const headerBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE), StegoMode.EXTRACT);
+      const headerView = new DataView(headerBytes.buffer);
+      const imageHash = headerView.getBigUint64(0, true);
+      const userId = headerView.getBigUint64(8, true);
+      const integrityHashBytes = headerBytes.slice(16, 16 + DATA_HASH_SIZE);
+      const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE, true);
+      
+      // 1. Verify User ID (Authentication)
+      if (usernameToVerify) {
+        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(usernameToVerify));
+        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
+        const computedUserId = usernameHash ^ imageHash;
 
-      const headerView = new DataView(headerBytes.buffer);
-      const imageHash = headerView.getBigUint64(0, true);
-      const userId = headerView.getBigUint64(8, true);
-      const integrityHashBytes = headerBytes.slice(16, 16 + DATA_HASH_SIZE); // 32 bytes
-      const websitesDataLength = headerView.getUint16(16 + DATA_HASH_SIZE, true); // Starts at index 48
-      
-      // 1. Verify User ID (Authentication)
-      if (usernameToVerify) {
-        const usernameHashBytes = await cryptoHash(new TextEncoder().encode(usernameToVerify));
-        const usernameHash = new DataView(usernameHashBytes.buffer).getBigUint64(0, true);
-        const computedUserId = usernameHash ^ imageHash;
+        if (userId !== computedUserId) {
+          throw new Error("Authentication failed: Username does not match the file's data.");
+        }
+      }
+      
+      let websites = [];
+      let websitesBytes = new Uint8Array(0);
+      
+      // CRITICAL FIX: Always extract and verify the payload if length > 0
+      if (websitesDataLength > 0) {
+        // Extract the full payload (Header + Websites) using CPU stego
+        const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
+        websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
+        
+        // 2. Verify Data Integrity Hash BEFORE processing
+        const computedIntegrityHash = await cryptoHash(websitesBytes);
+        
+        if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
+          throw new Error("Integrity check failed: Embedded data has been tampered with.");
+        }
+        
+        // Only decode websites if integrity passes and it's not the marker
+        const decodedText = new TextDecoder().decode(websitesBytes);
+        if (decodedText !== 'INIT') {
+          websites = decodedText.split('\0').filter(Boolean);
+        }
+      }
+      
+      return { userId, imageHash, websites };
+    }
 
-        if (userId !== computedUserId) {
-          throw new Error("Authentication failed: Username does not match the file's data.");
-        }
-      }
-      
-      let websites = [];
-      let websitesBytes = new Uint8Array(0);
-      
-      if (websitesDataLength > 0) {
-        // Extract the full payload (Header + Websites) using CPU stego
-        const fullPayloadBytes = runStegoCPU(imageData, new Uint8Array(HEADER_SIZE + websitesDataLength), StegoMode.EXTRACT);
-        websitesBytes = fullPayloadBytes.slice(HEADER_SIZE);
-        websites = new TextDecoder().decode(websitesBytes).split('\0').filter(Boolean);
-        
-        // 2. Verify Data Integrity Hash
-        const computedIntegrityHash = await cryptoHash(websitesBytes);
-        
-        if (!arraysEqual(integrityHashBytes, computedIntegrityHash)) {
-          throw new Error("Integrity check failed: Embedded data has been tampered with.");
-        }
-      }
-      
-      return { userId, imageHash, websites };
-    }
+    function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes) {
+      const dataToEmbed = new Uint8Array(HEADER_SIZE + websitesLength);
+      const dataView = new DataView(dataToEmbed.buffer);
+      
+      dataView.setBigUint64(0, imageHash, true);
+      dataView.setBigUint64(8, userId, true);
+      dataToEmbed.set(dataIntegrityHashBytes, 16);
+      dataView.setUint16(16 + DATA_HASH_SIZE, websitesLength, true);
+      dataToEmbed.set(websitesBytes, HEADER_SIZE);
+      
+      return dataToEmbed;
+    }
 
-    // Creates the full header and payload byte array
-    function createHeader(imageHash, userId, websitesLength, dataIntegrityHashBytes, websitesBytes) {
-      const dataToEmbed = new Uint8Array(HEADER_SIZE + websitesLength);
-      const dataView = new DataView(dataToEmbed.buffer);
-      
-      // 1. Image Hash (8 bytes)
-      dataView.setBigUint64(0, imageHash, true);
-      // 2. User ID (8 bytes)
-      dataView.setBigUint64(8, userId, true);
-      // 3. Data Integrity Hash (32 bytes)
-      dataToEmbed.set(dataIntegrityHashBytes, 16);
-      // 4. Websites Length (2 bytes)
-      dataView.setUint16(16 + DATA_HASH_SIZE, websitesLength, true); // Starts at index 48
-      // 5. Websites Data
-      dataToEmbed.set(websitesBytes, HEADER_SIZE);
-      
-      return dataToEmbed;
-    }
+    // --- Generic Utilities ---
+    
+    function arraysEqual(a, b) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+      }
+      return true;
+    }
 
+    async function cryptoHash(data) {
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+      return new Uint8Array(hashBuffer);
+    }
 
-    // --- Generic Utilities ---
-    
-    // Helper function to compare two Uint8Arrays
-    function arraysEqual(a, b) {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) {
-        if (a[i] !== b[i]) return false;
-      }
-      return true;
-    }
+    function sanitizeUsername(rawUsername) {
+      const username = rawUsername.trim();
+      let cleanUsername = username.replace(/[\u0000-\u001F]/g, '');
+      
+      if (cleanUsername.length === 0 || cleanUsername.length > MAX_USERNAME_LENGTH) {
+        return null;
+      }
+      return cleanUsername;
+    }
+    
+    async function updateActiveImageBlob(imageData) {
+        const canvas = document.getElementById('workingCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = imageData.width;
+        canvas.height = imageData.height;
+        ctx.putImageData(imageData, 0, 0);
 
-    // Use Web Crypto API for all hashing
-    async function cryptoHash(data) {
-      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-      return new Uint8Array(hashBuffer);
-    }
+        activeImageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    }
 
-    // Input Validation and Sanitization
-    function sanitizeUsername(rawUsername) {
-      const username = rawUsername.trim();
-      // Strip out control characters and the data separator character (null byte)
-      let cleanUsername = username.replace(/[\u0000-\u001F]/g, '');
-      
-      if (cleanUsername.length === 0 || cleanUsername.length > MAX_USERNAME_LENGTH) {
-        return null;
-      }
-      return cleanUsername;
-    }
-    
-    // Creates the output Blob and stores it globally for download
-    async function updateActiveImageBlob(imageData) {
-        const canvas = document.getElementById('workingCanvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = imageData.width;
-        canvas.height = imageData.height;
-        ctx.putImageData(imageData, 0, 0);
+    // --- Image and Stego Handling ---
 
-        activeImageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    }
+    function loadImageFileToImageData(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const reader = new FileReader();
+            
+            reader.onload = (e) => {
+                img.onload = () => {	
+                    if (img.width === 0 || img.height === 0) {
+                        return reject(new Error("Image loaded with zero width or height."));
+                    }
 
+                    const canvas = document.getElementById('workingCanvas');
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    canvas.width = img.width;	
+                    canvas.height = img.height;	
+                    ctx.drawImage(img, 0, 0);	
+                    
+                    resolve(ctx.getImageData(0, 0, img.width, img.height));	
+                };
+                img.onerror = () => reject(new Error("Image loading failed (img.onerror triggered)."));	
+                img.src = e.target.result;
+            };
+            reader.onerror = () => reject(new Error("File reading failed (reader.onerror triggered)."));	
+            reader.readAsDataURL(file);
+        });
+    }
 
-    // --- Image and Stego Handling (Unchanged) ---
+    function runStegoCPU(imageData, dataPayload, mode) {
+        const data = imageData.data;
+        let totalPayloadBits = dataPayload.length * 8;	
+        
+        if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
+            throw new Error("Data too large for image capacity.");
+        }
 
-    function loadImageFileToImageData(file) {
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-            const reader = new FileReader();
-            
-            reader.onload = (e) => {
-                img.onload = () => {	
-                    if (img.width === 0 || img.height === 0) {
-                        return reject(new Error("Image loaded with zero width or height."));
-                    }
+        if (mode === StegoMode.EMBED) {
+            let dataIndex = 0; 
+            let bitOffset = 7; 
 
-                    const canvas = document.getElementById('workingCanvas');
-                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                    canvas.width = img.width;	
-                    canvas.height = img.height;	
-                    ctx.drawImage(img, 0, 0);	
-                    
-                    resolve(ctx.getImageData(0, 0, img.width, img.height));	
-                };
-                img.onerror = () => reject(new Error("Image loading failed (img.onerror triggered)."));	
-                img.src = e.target.result;
-            };
-            reader.onerror = () => reject(new Error("File reading failed (reader.onerror triggered)."));	
-            reader.readAsDataURL(file);
-        });
-    }
+            for (let i = 0; i < data.length; i++) {
+                if ((i % 4) === 3) continue;	
+                if (totalPayloadBits <= 0) break;
 
-    function runStegoCPU(imageData, dataPayload, mode) {
-        const data = imageData.data; // The Uint8ClampedArray of R, G, B, A bytes
-        let totalPayloadBits = dataPayload.length * 8;	
-        
-        if (mode === StegoMode.EMBED && totalPayloadBits > (data.length / 4) * 3) {
-            throw new Error("Data too large for image capacity.");
-        }
+                const payloadByte = dataPayload[dataIndex];
+                const payloadBit = (payloadByte >> bitOffset) & 1;
 
-        if (mode === StegoMode.EMBED) {
-            let dataIndex = 0; 
-            let bitOffset = 7; 
+                data[i] = (data[i] & 0xFE) | payloadBit;
 
-            for (let i = 0; i < data.length; i++) {
-                if ((i % 4) === 3) continue;	
-                if (totalPayloadBits <= 0) break;
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
 
-                const payloadByte = dataPayload[dataIndex];
-                const payloadBit = (payloadByte >> bitOffset) & 1;
+                totalPayloadBits--; 
+            }
+            return imageData;
 
-                data[i] = (data[i] & 0xFE) | payloadBit;
+        } else {
+            const extractedBytes = new Uint8Array(dataPayload.length);
+            let dataIndex = 0; 
+            let bitOffset = 7; 
 
-                bitOffset--;
-                if (bitOffset < 0) {
-                    bitOffset = 7;
-                    dataIndex++;
-                }
+            for (let i = 0; i < data.length; i++) {
+                if ((i % 4) === 3) continue;
 
-                totalPayloadBits--; 
-            }
-            return imageData;
+                if (dataIndex >= extractedBytes.length) break;
 
-        } else { // StegoMode.EXTRACT
-            const extractedBytes = new Uint8Array(dataPayload.length);
-            let dataIndex = 0; 
-            let bitOffset = 7; 
+                const extractedBit = data[i] & 1;
 
-            for (let i = 0; i < data.length; i++) {
-                if ((i % 4) === 3) continue;
+                extractedBytes[dataIndex] |= (extractedBit << bitOffset);
 
-                if (dataIndex >= extractedBytes.length) break;
-
-                const extractedBit = data[i] & 1;
-
-                extractedBytes[dataIndex] |= (extractedBit << bitOffset);
-
-                bitOffset--;
-                if (bitOffset < 0) {
-                    bitOffset = 7;
-                    dataIndex++;
-                }
-            }
-            return extractedBytes;
-        }
-    }
-    
-    async function downloadImage() {
-        if (!activeImageBlob) return alert("No auth image is currently loaded to download.");
-        
-        const filename = 'myauth.png';
-        
-        // Use the in-memory Blob
-        const url = URL.createObjectURL(activeImageBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-    
-    // Now only clears the in-memory state and resets the UI
-    function clearData() {
-        // NOTE: We keep localStorage username for convenience, only clear active data
-        activeImageData = null;
-        activeUsername = null;
-        activeImageBlob = null;
-        renderLoaderView();
-    }
-  </script>
+                bitOffset--;
+                if (bitOffset < 0) {
+                    bitOffset = 7;
+                    dataIndex++;
+                }
+            }
+            return extractedBytes;
+        }
+    }
+    
+    async function downloadImage() {
+        if (!activeImageBlob) return alert("No auth image is currently loaded to download.");
+        
+        // Generate unique filename using timestamp and username
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const filename = `myauth_${activeUsername}_${timestamp}.png`;
+        
+        const url = URL.createObjectURL(activeImageBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+    
+    function clearData() {
+        activeImageData = null;
+        activeUsername = null;
+        activeImageBlob = null;
+        activeOriginalImageHash = null;
+        renderLoaderView();
+    }
+  </script>
 </body>
 </html>
